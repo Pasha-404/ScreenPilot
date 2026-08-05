@@ -1,0 +1,11 @@
+package ru.pavelkuzmin.screenpilot.domain.display;
+
+public enum ModeSelectionReason {
+    EXACT_FRAME_RATE_MATCH,
+    COMPATIBLE_24_FPS_RATE,
+    CURRENT_RATE_PRESERVED,
+    PREFERRED_RATE_USED,
+    HIGHEST_SAFE_RATE_FALLBACK,
+    UNKNOWN_FRAME_RATE_PRESERVED_CURRENT,
+    UNKNOWN_FRAME_RATE_PREFERRED_MODE
+}

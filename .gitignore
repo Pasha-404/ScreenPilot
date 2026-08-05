@@ -1,0 +1,18 @@
+.gradle/
+build/
+**/build/
+out/
+.idea/
+*.iml
+
+# Local mpv runtime is acquired only through the documented, hash-checked flow.
+vendor/mpv/runtime/*
+!vendor/mpv/runtime/.gitkeep
+
+# Windows and test artifacts
+*.log
+*.tmp
+*.bak
+*.exe
+*.msi
+
