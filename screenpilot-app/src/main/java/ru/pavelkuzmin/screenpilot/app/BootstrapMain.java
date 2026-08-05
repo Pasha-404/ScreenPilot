@@ -31,6 +31,12 @@ public final class BootstrapMain {
             }
             System.exit(MpvPlayerDemoMain.run(Arrays.copyOfRange(args, 1, args.length)));
         }
+        if (args.length > 0 && "output-hot-unplug-smoke".equals(args[0])) {
+            if (DisplayMutationSmokeMain.reportPendingRecovery()) {
+                System.exit(2);
+            }
+            System.exit(OutputHotUnplugSmokeMain.run(Arrays.copyOfRange(args, 1, args.length)));
+        }
         if (args.length > 0 && "display-mode-smoke".equals(args[0])) {
             System.exit(DisplayMutationSmokeMain.runModeSmoke(Arrays.copyOfRange(args, 1, args.length)));
         }
@@ -53,7 +59,8 @@ public final class BootstrapMain {
             System.exit(2);
         }
         System.out.println("ScreenPilot technical prototype. Run with: mpv-spike [path-to-mpv.exe] | display-probe | "
-                + "display-poll-smoke | player-demo --media=<file> | display-mode-smoke --confirm | "
+                + "display-poll-smoke | player-demo --media=<file> | "
+                + "output-hot-unplug-smoke --media=<file> --screen=1 | display-mode-smoke --confirm | "
                 + "display-mode-list | display-hot-unplug-watch --hold-ms=30000 | display-extend-smoke --confirm | "
                 + "display-recover --confirm");
     }

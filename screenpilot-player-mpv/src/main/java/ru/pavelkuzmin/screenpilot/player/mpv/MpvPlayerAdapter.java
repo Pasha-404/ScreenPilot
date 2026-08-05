@@ -78,6 +78,16 @@ public final class MpvPlayerAdapter implements AutoCloseable {
         this(executable, new MpvProcessLauncher(), containment, MpvIpcClient::connect, MpvLaunchProfile::forPlayer);
     }
 
+    /**
+     * Creates a production player whose fullscreen window is placed on a manually verified mpv
+     * screen number. Passing {@code null} preserves the default operating-system placement.
+     */
+    public MpvPlayerAdapter(Path executable, ProcessContainment containment, Integer targetScreen) {
+        this(executable, new MpvProcessLauncher(), containment, MpvIpcClient::connect,
+                (playerExecutable, sessionId, softwareDecode) ->
+                        MpvLaunchProfile.forPlayer(playerExecutable, sessionId, softwareDecode, targetScreen));
+    }
+
     MpvPlayerAdapter(
             Path executable,
             MpvProcessStarter processStarter,

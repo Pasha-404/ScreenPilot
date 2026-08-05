@@ -33,7 +33,7 @@
 
 ## Аппаратная проверка
 
-На эталонном Windows 10 build 19045 HDMI target в режиме clone не имел отдельного GDI-имени. `display-extend-smoke --confirm --hold-ms=3000` временно активировал тот же target как `\\.\DISPLAY2`, затем восстановил исходный clone и закрыл recovery journal. Отдельная команда polling также увидела физическое отключение HDMI на следующем секундном опросе. Детали — в [hardware-test-checklist.md](../hardware-test-checklist.md).
+На эталонном Windows 10 build 19045 HDMI target в режиме clone не имел отдельного GDI-имени. `display-extend-smoke --confirm --hold-ms=3000` временно активировал тот же target как `\\.\DISPLAY2`, затем восстановил исходный clone и закрыл recovery journal. Отдельная команда polling также увидела физическое отключение HDMI на следующем секундном опросе. `output-hot-unplug-smoke` подтвердил безопасную остановку активного mpv-процесса после отключения выбранного target: `WindowsDisplayPoller` обнаружил потерю HDMI, mpv остановлен, Job Object освобождён. Команда не меняла display configuration. Детали — в [hardware-test-checklist.md](../hardware-test-checklist.md).
 
 ## Источники
 

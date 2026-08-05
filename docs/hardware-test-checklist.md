@@ -28,6 +28,6 @@
 | Recovery после аварийной остановки | PASS | После успешного применения `1280×720 @ 60 Гц` Java-процесс намеренно завершён `Runtime.halt(86)`. Следующий запуск `display-recover --confirm` восстановил исходную конфигурацию по persisted journal и закрыл его. |
 | Переход из clone к Extend и rollback | PASS | HDMI target `257` в clone не имел отдельного GDI-имени и режима. `display-extend-smoke` сохранил snapshot, временно включил Extend, повторно обнаружил тот же target как `\\.\DISPLAY2`, удержал состояние 3 с и восстановил исходный clone. Journal закрыт. |
 | Отключение HDMI во время polling | PASS | Во время `display-hot-unplug-watch --hold-ms=30000` кабель физически отключён. `display-poller` обнаружил исчезновение target `\\.\DISPLAY2` на своём секундном интервале; Java-процесс завершился штатно. |
-| Отключение HDMI во время активного video output | NOT TESTED | Stage 5 ещё не соединяет mpv output session и display mutation в единый UI/use case. Проверка будет выполнена после интеграции основного JavaFX flow. |
+| Отключение HDMI во время активного video output | PASS | `output-hot-unplug-smoke` запустил локальный MP4 на mpv screen `1` и сопоставил HDMI `\\.\DISPLAY2` по `DisplayTargetAddress`. При физическом отключении кабеля `WindowsDisplayPoller` увидел потерю target, mpv был остановлен, а Job Object освобождён. |
 
 Эталонная среда: Windows 10 Pro 22H2 build 19045; AMD Radeon Graphics driver `31.0.12046.15003`; mpv `v0.41.0-744-g304426c39`. Windows видит внешний HDMI `DISPLAY2` 1920×1080 @ 59,940 Гц в extended mode.

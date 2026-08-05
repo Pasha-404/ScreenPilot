@@ -30,4 +30,17 @@ class MpvLaunchProfileTest {
         assertThat(profile.arguments())
                 .contains("--screen=1", "--fullscreen", "--fs-screen=1");
     }
+
+    @Test
+    void placesProductionPlayerOnExplicitMpvScreenOnlyWhenRequested() {
+        MpvLaunchProfile explicit = MpvLaunchProfile.forPlayer(
+                Path.of("vendor/mpv/runtime/mpv.exe"), UUID.randomUUID(), false, 1);
+        MpvLaunchProfile defaultPlacement = MpvLaunchProfile.forPlayer(
+                Path.of("vendor/mpv/runtime/mpv.exe"), UUID.randomUUID(), false);
+
+        assertThat(explicit.arguments())
+                .contains("--screen=1", "--fullscreen", "--fs-screen=1");
+        assertThat(defaultPlacement.arguments())
+                .doesNotContain("--screen=1", "--fullscreen", "--fs-screen=1");
+    }
 }

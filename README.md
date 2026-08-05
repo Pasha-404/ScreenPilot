@@ -1,6 +1,6 @@
 # ScreenPilot
 
-> Обновление от 05.08.2026: реализована программная часть этапа 5. Реальные проверки подтвердили временную смену режима, recovery после аварийной остановки, clone → Extend → clone и обнаружение физического unplug. Этап ещё не принят: остаётся проверка отключения во время работающего video output.
+> Обновление от 05.08.2026: этап 5 принят. Реальные проверки подтвердили временную смену режима, recovery после аварийной остановки, clone → Extend → clone, обнаружение физического unplug и безопасную остановку mpv во время работающего video output. Физическая проверка HDMI-аудио отложена владельцем проекта и не блокирует дальнейшую разработку.
 
 ScreenPilot — Windows-приложение для управления воспроизведением локального видео на одном внешнем экране. Панель управления остаётся на ноутбуке, а видео выводится отдельным полноэкранным окном только на выбранный display target.
 
@@ -69,6 +69,14 @@ ScreenPilot — Windows-приложение для управления вос�
 
 `display-mode-smoke` принимает только режим, перечисленный `display-mode-list`; дробная частота не округляется до целой. Если выбранный target был clone или неактивен, команда сначала сохраняет исходный snapshot, временно включает Extend и заново находит тот же Win32 target по `adapter LUID + target ID`. Если Windows включила другой экран, ScreenPilot делает rollback и не меняет режим. Если журнал остался активным, обычная работа блокируется до `display-recover --confirm` или явного `display-keep-current --confirm`. Для отдельной read-only проверки unplug есть `display-hot-unplug-watch --hold-ms=30000`; вынимать HDMI следует только когда команда уже сообщила, что наблюдение началось.
 
+Чтобы повторить проверку этапа 5, нужен существующий локальный видеофайл. При единственном активном внешнем экране и уже подтверждённом сопоставлении mpv `screen=1` запускается команда:
+
+```powershell
+.\gradlew.bat :screenpilot-app:run --args="output-hot-unplug-smoke --media=C:\path\video.mp4 --screen=1 --hold-ms=30000"
+```
+
+Она не меняет режимы или topology Windows и не трогает системное устройство звука. Команда запускает production-адаптер mpv на указанном mpv-экране, проверяет присутствие выбранного внешнего target через `WindowsDisplayPoller`, а после физического отключения HDMI останавливает mpv и освобождает его Job Object. Отключать кабель нужно только после сообщения `Video is playing…`. Если внешних экранов несколько, сначала выполните `display-probe` и добавьте `--target=<display-id>`.
+
 После того как пользователь включил режим «Расширить», ручная проверка выбранного экрана выполняется так:
 
 ```powershell
@@ -97,7 +105,7 @@ ScreenPilot — Windows-приложение для управления вос�
 - read-only Windows adapter: `QueryDisplayConfig`, запросы `DisplayConfigGetDeviceInfo`, `EnumDisplaySettingsExW`, физические bounds, HDMI/internal/DisplayPort classification и rational refresh;
 - безопасный `display-poller` с интервалом 1 с, fake fixtures и unit-тестами: полная discovery выполняется только при изменении topology;
 - отдельный hardware integration test и консольный probe; проверенная текущая конфигурация — HDMI target `\\.\DISPLAY2`, 1920×1080 @ 59,940 Гц.
-- Stage 5: lossless snapshot `DISPLAYCONFIG_*` + активные `DEVMODEW`, проверяемая временная смена режима без `CDS_UPDATEREGISTRY`, rollback, persisted recovery journal, archive на семь дней и startup guard; подробности — в [ADR-0004](docs/adr/0004-display-mutation-recovery.md).
+- Stage 5: lossless snapshot `DISPLAYCONFIG_*` + активные `DEVMODEW`, проверяемая временная смена режима без `CDS_UPDATEREGISTRY`, rollback, persisted recovery journal, archive на семь дней, startup guard и отдельная техническая остановка mpv при потере внешнего target; подробности — в [ADR-0004](docs/adr/0004-display-mutation-recovery.md).
 
 На эталонном AMD-драйвере Windows возвращает `ERROR_GEN_FAILURE` для запросов `DisplayConfigGetDeviceInfo`, хотя сами path-данные исправны. В этом случае ScreenPilot явно помечает `gdiMapping=FALLBACK`, использует `EnumDisplayDevicesW` только для read-only диагностики и не считает такую привязку достаточной для будущих автоматических изменений конфигурации. Решение и ограничения зафиксированы в [ADR-0002](docs/adr/0002-display-discovery-fallback.md).
 

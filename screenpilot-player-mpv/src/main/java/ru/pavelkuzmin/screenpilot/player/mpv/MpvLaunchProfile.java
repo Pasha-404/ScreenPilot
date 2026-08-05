@@ -45,9 +45,33 @@ public record MpvLaunchProfile(Path executable, String ipcPipe, String windowTit
         return new MpvLaunchProfile(profile.executable(), profile.ipcPipe(), profile.windowTitle(), arguments);
     }
 
-    /** Production Stage 4 profile. Screen placement stays outside this adapter until Stage 5. */
+    /** Production player profile. A caller may explicitly opt into a known mpv screen number. */
     public static MpvLaunchProfile forPlayer(Path executable, UUID sessionId, boolean softwareDecode) {
-        return create(executable, sessionId, "ScreenPilot Output ", softwareDecode);
+        return forPlayer(executable, sessionId, softwareDecode, null);
+    }
+
+    /**
+     * Production player profile placed fullscreen on a manually verified mpv screen when requested.
+     * The numeric screen mapping is intentionally supplied by the composition root: Windows display
+     * discovery identifies the physical target, while mpv owns its own screen numbering.
+     */
+    public static MpvLaunchProfile forPlayer(
+            Path executable,
+            UUID sessionId,
+            boolean softwareDecode,
+            Integer targetScreen
+    ) {
+        if (targetScreen != null && targetScreen < 0) {
+            throw new IllegalArgumentException("targetScreen must be zero or greater");
+        }
+        MpvLaunchProfile profile = create(executable, sessionId, "ScreenPilot Output ", softwareDecode);
+        List<String> arguments = new ArrayList<>(profile.arguments());
+        if (targetScreen != null) {
+            arguments.add("--screen=" + targetScreen);
+            arguments.add("--fullscreen");
+            arguments.add("--fs-screen=" + targetScreen);
+        }
+        return new MpvLaunchProfile(profile.executable(), profile.ipcPipe(), profile.windowTitle(), arguments);
     }
 
     /** Real-mpv integration profile with no video or audio output; never use in the application. */

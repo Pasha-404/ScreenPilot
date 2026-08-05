@@ -42,6 +42,7 @@ mpv.exe --no-config --idle=yes --force-window=immediate --keep-open=yes --termin
 | Embedded subtitles | PASS | В сгенерированном временном MKV mpv вернул embedded SubRip-дорожку в `track-list` (`external=false`) и подтвердил её выбор через `sid=1`. |
 | Окно только на выбранном external target | PASS | При активном `DISPLAY2` mpv запущен с `--screen=1`; наблюдатель подтвердил полноэкранное окно только на внешнем экране и отсутствие видео на ноутбуке. Stage 3 ещё не реализован. |
 | 10 повторных запусков на target | PASS | Десять `--screen=1 --repeat=10` завершились без ошибок; наблюдатель подтвердил размещение на внешнем экране, а после теста `mpv.exe` не остался. |
+| Отключение HDMI во время активного video output | PASS | `output-hot-unplug-smoke` запустил локальный MP4 на вручную подтверждённом `--screen=1`; `WindowsDisplayPoller` увидел потерю конкретного HDMI target, после чего mpv был остановлен, а Job Object освобождён. |
 | HDR10 → SDR tone mapping | PASS | На SDR external monitor воспроизведён синтетический HEVC HDR10 fixture: 10-bit P010, BT.2020, PQ, peak 1 000 нит; mpv использовал D3D11VA. Наблюдатель подтвердил нормальное цветное изображение без серой пелены или сплошных белых областей. Это smoke-проверка, а не замена художественного HDR10-контента перед релизом. |
 | HDMI audio | NOT TESTED | mpv нашёл и выбрал только для своего процесса display-audio WASAPI endpoint `P27FBB-RG (AMD High Definition Audio Device)`. Физическое воспроизведение звука не проверено: у доступного монитора нет подтверждённых динамиков. Владелец проекта 05.08.2026 явно отложил эту проверку до появления подходящего оборудования. |
 | Job Object убивает mpv при аварийном завершении Java | PASS | В обычном PowerShell вне Codex Job Object назначен успешно; spike намеренно завершил Java через `Runtime.halt(86)`, после чего проверка не нашла нового `mpv.exe`. |
@@ -51,6 +52,7 @@ mpv.exe --no-config --idle=yes --force-window=immediate --keep-open=yes --termin
 - Текущий код — технический прототип, не JavaFX UI. Основной поток: `MpvSpikeMain` → `MpvProcessLauncher` → `MpvIpcClient`; Windows Job Object изолирован в `screenpilot-platform-windows`.
 - Runtime намеренно исключён из Git. Лицензионные notices пока недостаточны для установки пользователю: перед этапом installer нужен полный SBOM/набор notices для точной сборки.
 - `--without-job-object` существует только для диагностики в окружении Codex. В нормальном пути он не применяется и не может считаться проверкой containment.
+- До готовности JavaFX-слоя соответствие между Win32 target и номером `mpv --screen` подтверждается вручную в техническом тесте. `output-hot-unplug-smoke` требует этот номер явным параметром и перед запуском проверяет, что выбран ровно один активный внешний target (либо указано его `DisplayId`).
 - Если hardware-check покажет ненадёжное размещение окна или выбор HDMI audio, нужно остановить принятие mpv и сравнить `libmpv`/VLCJ по фактическим данным.
 
 ## Решение gate
