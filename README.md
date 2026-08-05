@@ -2,7 +2,7 @@
 
 ScreenPilot — Windows-приложение для управления воспроизведением локального видео на одном внешнем экране. Панель управления остаётся на ноутбуке, а видео выводится отдельным полноэкранным окном только на выбранный display target.
 
-Текущий статус: этапы 0–2 завершены; mpv/Windows gate принят для разработки MVP. Следующий этап — read-only Windows display adapter. Полноценный интерфейс и пользовательские функции ещё не реализованы.
+Текущий статус: этапы 0–3 завершены; mpv/Windows gate принят для разработки MVP. Реализованы read-only обнаружение экранов и опрос топологии. Полноценный интерфейс и пользовательские функции ещё не реализованы.
 
 ## Требования для разработки
 
@@ -28,6 +28,15 @@ ScreenPilot — Windows-приложение для управления вос�
 .\gradlew.bat :screenpilot-app:run --args="mpv-spike"
 ```
 
+Диагностика этапа 3 (только чтение Windows; экран, режим, HDR и аудио не меняются):
+
+```powershell
+.\gradlew.bat :screenpilot-app:run --args="display-probe"
+.\gradlew.bat :screenpilot-app:run --args="display-poll-smoke"
+```
+
+Первая команда выводит известные Windows display targets, GDI-имя, текущий и доступные режимы. Вторая на одну итерацию запускает фоновый `display-poller`: его лёгкая проверка topology выполняется раз в секунду, а полное перечисление режимов — лишь при изменении хеша.
+
 После того как пользователь включил режим «Расширить», ручная проверка выбранного экрана выполняется так:
 
 ```powershell
@@ -46,13 +55,18 @@ ScreenPilot — Windows-приложение для управления вос�
 - `screenpilot-persistence` — JSON-хранилища;
 - `screenpilot-app` — будущая JavaFX-точка входа.
 
-## Реализовано на этапе 2
+## Реализовано на этапах 2–3
 
 - точный выбор режима по рациональным частотам, включая семейства 24 000/1 001 и 60 000/1 001;
 - машины состояний сессии вывода и плеера;
 - fingerprint и правила сохранения позиции просмотра;
 - атомарные JSON settings, resume и recovery journal с миграцией и защитой от повреждённых или более новых схем;
 - unit-тесты чистой логики и файлового persistence.
+- read-only Windows adapter: `QueryDisplayConfig`, запросы `DisplayConfigGetDeviceInfo`, `EnumDisplaySettingsExW`, физические bounds, HDMI/internal/DisplayPort classification и rational refresh;
+- безопасный `display-poller` с интервалом 1 с, fake fixtures и unit-тестами: полная discovery выполняется только при изменении topology;
+- отдельный hardware integration test и консольный probe; проверенная текущая конфигурация — HDMI target `\\.\DISPLAY2`, 1920×1080 @ 59,940 Гц.
+
+На эталонном AMD-драйвере Windows возвращает `ERROR_GEN_FAILURE` для запросов `DisplayConfigGetDeviceInfo`, хотя сами path-данные исправны. В этом случае ScreenPilot явно помечает `gdiMapping=FALLBACK`, использует `EnumDisplayDevicesW` только для read-only диагностики и не считает такую привязку достаточной для будущих автоматических изменений конфигурации. Решение и ограничения зафиксированы в [ADR-0002](docs/adr/0002-display-discovery-fallback.md).
 
 ## Документация
 

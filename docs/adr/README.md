@@ -12,3 +12,4 @@
 
 Первый обязательный ADR: `0001-video-engine.md`.
 
+- `0002-display-discovery-fallback.md` — работа с драйвером, который отдаёт paths, но отклоняет пакеты `DisplayConfigGetDeviceInfo`.

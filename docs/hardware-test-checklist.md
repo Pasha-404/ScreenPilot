@@ -16,5 +16,10 @@
 | Окно на выбранном external target | PASS | Windows видит `DISPLAY2` в extended mode. Наблюдатель подтвердил: полноэкранное окно mpv появилось только на внешнем экране, на ноутбуке видео не было. |
 | Десять повторных запусков окна | PASS | Десять запусков `--screen=1 --repeat=10` завершились успешно; наблюдатель подтвердил размещение только на внешнем экране, после теста `mpv.exe` не остался. |
 | Job Object завершает mpv | PASS | В обычном PowerShell вне Codex Job Object назначен успешно; тестовый Java-процесс завершён через `Runtime.halt(86)`, после чего новый `mpv.exe` не остался. |
+| Read-only HDMI discovery | PASS | `QueryDisplayConfig` обнаружил активный target `257` с `DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HDMI`; console probe показал внешний `Generic PnP Monitor`, `\\.\DISPLAY2`, 1920×1080 @ 59,940 Гц и 80 подтверждённых режимов. Настройки Windows не менялись. |
+| Точная частота внешнего экрана | PASS | Рациональная частота из Display Configuration API: 59,940 Гц; не сведена к 59 или 60 Гц во внутренней модели. |
+| Опрос topology | PASS | `display-poll-smoke` получил 3 path(s) и опубликовал первый snapshot через поток `display-poller`; параметры Windows не менялись. |
+| `DisplayConfigGetDeviceInfo` metadata | PASS | Вызовы реализованы и выполнены. На текущем AMD-драйвере все пакеты `GET_*` вернули `ERROR_GEN_FAILURE` (31), поэтому имя/EDID/preferred mode/Advanced Color отсутствуют, а GDI-связь явно помечена `FALLBACK`; read-only fallback через `EnumDisplayDevicesW` и `EnumDisplaySettingsExW` подтвердил `DISPLAY2`. |
+| Отключение HDMI во время polling | NOT TESTED | Монитор был нужен владельцу, кабель во время проверки не отсоединялся. Нужна отдельная ручная проверка обнаружения отключения не позднее 2 секунд. |
 
-Эталонная среда: Windows 10 Pro 22H2 build 19045; AMD Radeon Graphics driver `31.0.12046.15003`; mpv `v0.41.0-744-g304426c39`. Windows видит внешний `DISPLAY2` 1920×1080 в extended mode; тип подключения ещё не зафиксирован будущим read-only display adapter.
+Эталонная среда: Windows 10 Pro 22H2 build 19045; AMD Radeon Graphics driver `31.0.12046.15003`; mpv `v0.41.0-744-g304426c39`. Windows видит внешний HDMI `DISPLAY2` 1920×1080 @ 59,940 Гц в extended mode.
