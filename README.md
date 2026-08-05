@@ -59,14 +59,15 @@ ScreenPilot — Windows-приложение для управления вос�
 # Временно применить подтверждённый режим внешнего экрана и автоматически восстановить snapshot.
 .\gradlew.bat :screenpilot-app:run --args="display-mode-smoke --confirm --mode=1280x720@60 --hold-ms=3000"
 
-# Убедиться, что активны раздельные internal/external desktop; при необходимости команда временно просит Windows Extend.
+# Убедиться, что активны раздельные internal/external desktop; команда работает и с
+# подключённым, но неактивным или клонированным target и при необходимости временно просит Windows Extend.
 .\gradlew.bat :screenpilot-app:run --args="display-extend-smoke --confirm --hold-ms=0"
 
 # Если предыдущий процесс завершился до rollback, сначала выполняется только эта команда.
 .\gradlew.bat :screenpilot-app:run --args="display-recover --confirm"
 ```
 
-`display-mode-smoke` принимает только режим, перечисленный `display-mode-list`; дробная частота не округляется до целой. Если журнал остался активным, обычная работа блокируется до `display-recover --confirm` или явного `display-keep-current --confirm`. Для отдельной read-only проверки unplug есть `display-hot-unplug-watch --hold-ms=30000`; вынимать HDMI следует только когда команда уже сообщила, что наблюдение началось.
+`display-mode-smoke` принимает только режим, перечисленный `display-mode-list`; дробная частота не округляется до целой. Если выбранный target был clone или неактивен, команда сначала сохраняет исходный snapshot, временно включает Extend и заново находит тот же Win32 target по `adapter LUID + target ID`. Если Windows включила другой экран, ScreenPilot делает rollback и не меняет режим. Если журнал остался активным, обычная работа блокируется до `display-recover --confirm` или явного `display-keep-current --confirm`. Для отдельной read-only проверки unplug есть `display-hot-unplug-watch --hold-ms=30000`; вынимать HDMI следует только когда команда уже сообщила, что наблюдение началось.
 
 После того как пользователь включил режим «Расширить», ручная проверка выбранного экрана выполняется так:
 

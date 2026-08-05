@@ -28,6 +28,57 @@ final class WindowsDisplayTopologyFixtures {
         return List.of(display("internal-panel", "Internal panel", ConnectionType.INTERNAL, true, true, true, 256, 0));
     }
 
+    static List<DisplayInfo> clonedInternalAndHdmi() {
+        DisplayInfo internal = display("internal-panel", "Internal panel", ConnectionType.INTERNAL, true, true, true, 256, 0);
+        DisplayMode mode = internal.currentMode();
+        DisplayInfo clone = new DisplayInfo(
+                new DisplayId("hdmi-monitor"),
+                "HDMI monitor",
+                "Fixture",
+                "Fixture model",
+                ConnectionType.HDMI,
+                false,
+                true,
+                true,
+                true,
+                "\\\\.\\DISPLAY1",
+                GdiMappingConfidence.AUTHORITATIVE,
+                new DisplayBounds(0, 0, 1920, 1080),
+                mode,
+                mode,
+                List.of(mode),
+                false,
+                "",
+                new DisplayTargetAddress(42628, 0, 257)
+        );
+        return List.of(internal, clone);
+    }
+
+    static List<DisplayInfo> internalAndInactiveHdmi() {
+        DisplayInfo internal = display("internal-panel", "Internal panel", ConnectionType.INTERNAL, true, true, true, 256, 0);
+        DisplayInfo inactive = new DisplayInfo(
+                new DisplayId("hdmi-monitor"),
+                "HDMI monitor",
+                "Fixture",
+                "Fixture model",
+                ConnectionType.HDMI,
+                false,
+                false,
+                false,
+                true,
+                "",
+                GdiMappingConfidence.UNAVAILABLE,
+                null,
+                null,
+                null,
+                List.of(),
+                false,
+                "",
+                new DisplayTargetAddress(42628, 0, 257)
+        );
+        return List.of(internal, inactive);
+    }
+
     private static DisplayInfo display(
             String id,
             String name,

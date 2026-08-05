@@ -74,4 +74,26 @@ class WindowsDisplaySnapshotTest {
         assertThat(restored.modeCount()).isZero();
         assertThat(restored.modeBytes()).isEmpty();
     }
+
+    @Test
+    void roundTripsInactiveOriginalTargetWithoutInventingAGdiMode() {
+        WindowsDisplaySnapshot snapshot = new WindowsDisplaySnapshot(
+                "internal-only-topology",
+                1,
+                "",
+                new DisplayTargetAddress(42_628, 0, 257),
+                null,
+                1,
+                new byte[72],
+                1,
+                new byte[64],
+                List.of(new WindowsDisplaySnapshot.SourceDevMode("\\\\.\\DISPLAY1", new byte[220]))
+        );
+
+        WindowsDisplaySnapshot restored = WindowsDisplaySnapshot.fromRecoveryPayload(snapshot.toRecoveryPayload());
+
+        assertThat(restored.targetGdiDeviceName()).isEmpty();
+        assertThat(restored.targetMode()).isNull();
+        assertThat(restored.hasOriginalTargetMode()).isFalse();
+    }
 }

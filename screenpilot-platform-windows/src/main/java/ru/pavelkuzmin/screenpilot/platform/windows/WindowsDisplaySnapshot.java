@@ -44,9 +44,9 @@ public final class WindowsDisplaySnapshot {
     ) {
         this.topologyFingerprint = requireText(topologyFingerprint, "topologyFingerprint");
         this.topologyId = topologyId;
-        this.targetGdiDeviceName = requireText(targetGdiDeviceName, "targetGdiDeviceName");
+        this.targetGdiDeviceName = targetGdiDeviceName == null ? "" : targetGdiDeviceName;
         this.targetAddress = Objects.requireNonNull(targetAddress, "targetAddress");
-        this.targetMode = Objects.requireNonNull(targetMode, "targetMode");
+        this.targetMode = targetMode;
         if (pathCount < 1 || modeCount < 0) {
             throw new IllegalArgumentException("Invalid DisplayConfig array counts");
         }
@@ -75,6 +75,11 @@ public final class WindowsDisplaySnapshot {
 
     public DisplayMode targetMode() {
         return targetMode;
+    }
+
+    /** An inactive or cloned original target has no independent GDI mode to restore. */
+    public boolean hasOriginalTargetMode() {
+        return targetMode != null && !targetGdiDeviceName.isBlank();
     }
 
     int pathCount() {
@@ -107,7 +112,7 @@ public final class WindowsDisplaySnapshot {
         fields.put("targetLuidLow", Long.toUnsignedString(targetAddress.adapterLuidLowPart()));
         fields.put("targetLuidHigh", Integer.toUnsignedString(targetAddress.adapterLuidHighPart()));
         fields.put("targetId", Integer.toUnsignedString(targetAddress.targetId()));
-        fields.put("targetMode", encodeMode(targetMode));
+        fields.put("targetMode", targetMode == null ? "_" : encodeMode(targetMode));
         fields.put("pathCount", Integer.toString(pathCount));
         fields.put("pathBytes", encoded(pathBytes));
         fields.put("modeCount", Integer.toString(modeCount));
@@ -149,7 +154,7 @@ public final class WindowsDisplaySnapshot {
                         Integer.parseUnsignedInt(required(fields, "targetLuidHigh")),
                         Integer.parseUnsignedInt(required(fields, "targetId"))
                 ),
-                decodeMode(required(fields, "targetMode")),
+                decodeOptionalMode(required(fields, "targetMode")),
                 requiredInt(fields, "pathCount"),
                 decodedBytes(required(fields, "pathBytes")),
                 requiredInt(fields, "modeCount"),
@@ -204,6 +209,10 @@ public final class WindowsDisplaySnapshot {
                 Integer.parseInt(fields[5]),
                 Boolean.parseBoolean(fields[6])
         );
+    }
+
+    private static DisplayMode decodeOptionalMode(String value) {
+        return "_".equals(value) ? null : decodeMode(value);
     }
 
     private static String required(Map<String, String> fields, String name) {

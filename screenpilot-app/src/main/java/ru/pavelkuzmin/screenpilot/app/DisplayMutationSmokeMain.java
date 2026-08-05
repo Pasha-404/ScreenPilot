@@ -53,14 +53,12 @@ final class DisplayMutationSmokeMain {
 
         try {
             WindowsDisplayDiscovery discovery = new WindowsDisplayDiscovery();
-            DisplayInfo target = selectTarget(discovery.discoverDisplays(), command.targetId());
-            DisplayMode requested = selectRequestedMode(target, command.mode());
+            DisplayInfo target = selectTarget(discovery.discoverDisplays(), command.targetId(), false);
             WindowsDisplayMutator mutator = new WindowsDisplayMutator();
             System.out.println("[INFO] Selected external target " + target.friendlyName()
                     + " | id=" + target.id().value()
                     + " | gdi=" + target.gdiDeviceName()
-                    + " | mapping=" + target.gdiMappingConfidence()
-                    + " | requested=" + formatMode(requested));
+                    + " | mapping=" + target.gdiMappingConfidence());
 
             WindowsDisplaySnapshot snapshot = mutator.captureSnapshot(target, true);
             RecoveryRecord record = RecoveryRecord.begin(UUID.randomUUID(), Instant.now(), snapshot.toRecoveryPayload());
@@ -69,7 +67,11 @@ final class DisplayMutationSmokeMain {
 
             boolean restored = false;
             try {
-                DisplayMode actual = mutator.applyTemporaryMode(snapshot, requested);
+                DisplayInfo activeTarget = mutator.ensureExtendedTopology(target, true);
+                DisplayMode requested = selectRequestedMode(activeTarget, command.mode());
+                System.out.println("[INFO] Active target after topology preparation: " + activeTarget.gdiDeviceName()
+                        + " | requested=" + formatMode(requested));
+                DisplayMode actual = mutator.applyTemporaryMode(snapshot, activeTarget, requested);
                 System.out.println("[PASS] Temporary target mode was applied and read back as " + formatMode(actual) + ".");
                 if (command.simulateCrash()) {
                     System.out.println("[INFO] Simulating abrupt termination. The recovery journal is intentionally left active; "
@@ -110,7 +112,7 @@ final class DisplayMutationSmokeMain {
         }
         try {
             WindowsDisplayDiscovery discovery = new WindowsDisplayDiscovery();
-            DisplayInfo target = selectTarget(discovery.discoverDisplays(), command.targetId());
+            DisplayInfo target = selectTarget(discovery.discoverDisplays(), command.targetId(), false);
             WindowsDisplayMutator mutator = new WindowsDisplayMutator();
             WindowsDisplaySnapshot snapshot = mutator.captureSnapshot(target, true);
             RecoveryRecord record = RecoveryRecord.begin(UUID.randomUUID(), Instant.now(), snapshot.toRecoveryPayload());
@@ -119,9 +121,10 @@ final class DisplayMutationSmokeMain {
                     + record.sessionId());
             boolean restored = false;
             try {
-                mutator.ensureExtendedTopology(target, true);
-                System.out.println("[PASS] Windows reports an active, separate internal and external desktop.");
-                waitWhileUserObserves(target, command.holdMillis());
+                DisplayInfo activeTarget = mutator.ensureExtendedTopology(target, true);
+                System.out.println("[PASS] Windows reports an active, separate internal and external desktop: "
+                        + activeTarget.gdiDeviceName() + ".");
+                waitWhileUserObserves(activeTarget, command.holdMillis());
             } finally {
                 try {
                     mutator.restore(snapshot);
@@ -155,7 +158,7 @@ final class DisplayMutationSmokeMain {
             return 2;
         }
         try {
-            DisplayInfo target = selectTarget(new WindowsDisplayDiscovery().discoverDisplays(), command.targetId());
+            DisplayInfo target = selectTarget(new WindowsDisplayDiscovery().discoverDisplays(), command.targetId(), true);
             System.out.println("[PASS] Confirmed driver modes for " + target.friendlyName() + " | id=" + target.id().value());
             target.confirmedModes().forEach(mode -> System.out.println("[INFO] " + formatMode(mode)
                     + (mode.interlaced() ? " interlaced" : "")));
@@ -185,7 +188,7 @@ final class DisplayMutationSmokeMain {
         }
         try {
             WindowsDisplayDiscovery discovery = new WindowsDisplayDiscovery();
-            DisplayInfo target = selectTarget(discovery.discoverDisplays(), command.targetId());
+            DisplayInfo target = selectTarget(discovery.discoverDisplays(), command.targetId(), true);
             CountDownLatch initialTopology = new CountDownLatch(1);
             CountDownLatch targetLost = new CountDownLatch(1);
             AtomicBoolean baselineSeen = new AtomicBoolean();
@@ -304,23 +307,28 @@ final class DisplayMutationSmokeMain {
         return true;
     }
 
-    private static DisplayInfo selectTarget(List<DisplayInfo> displays, String requestedId) {
+    private static DisplayInfo selectTarget(
+            List<DisplayInfo> displays,
+            String requestedId,
+            boolean requireIndependentActiveTarget
+    ) {
         List<DisplayInfo> candidates = displays.stream()
-                .filter(DisplayInfo::active)
                 .filter(display -> !display.internal())
-                .filter(display -> !display.primary())
-                .filter(display -> display.currentMode() != null)
-                .filter(display -> !display.gdiDeviceName().isBlank())
+                .filter(display -> display.active() || display.targetAvailable())
+                .filter(display -> !requireIndependentActiveTarget || display.active())
+                .filter(display -> !requireIndependentActiveTarget || !display.primary())
+                .filter(display -> !requireIndependentActiveTarget || display.currentMode() != null)
+                .filter(display -> !requireIndependentActiveTarget || !display.gdiDeviceName().isBlank())
                 .sorted(Comparator.comparing(display -> display.id().value()))
                 .toList();
         if (requestedId != null) {
             return candidates.stream()
                     .filter(display -> display.id().value().equals(requestedId))
                     .findFirst()
-                    .orElseThrow(() -> new IllegalArgumentException("The requested active external target was not found: " + requestedId));
+                    .orElseThrow(() -> new IllegalArgumentException("The requested available external target was not found: " + requestedId));
         }
         if (candidates.size() != 1) {
-            throw new IllegalArgumentException("Exactly one active external non-primary display is required; found "
+            throw new IllegalArgumentException("Exactly one available external display is required; found "
                     + candidates.size() + ". Specify --target=<id> after display-probe.");
         }
         return candidates.getFirst();

@@ -15,8 +15,10 @@ import ru.pavelkuzmin.screenpilot.domain.recovery.RecoveryRecord;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Windows-only, explicitly temporary display mutation with snapshot-based rollback.
@@ -61,23 +63,27 @@ public final class WindowsDisplayMutator {
         this.discovery = Objects.requireNonNull(discovery, "discovery");
     }
 
-    /** Captures all active DisplayConfig paths/modes and each active GDI DEVMODE before mutation. */
+    /** Captures all active DisplayConfig paths/modes before mutation, including an inactive chosen target. */
     public WindowsDisplaySnapshot captureSnapshot(DisplayInfo target, boolean targetWasExplicitlyConfirmed) throws IOException {
-        requireMutableTarget(target, targetWasExplicitlyConfirmed);
+        requireSelectableExternalTarget(target, targetWasExplicitlyConfirmed);
         NativeTopology topology = queryActiveTopology();
+        List<DisplayInfo> displays = discovery.discoverDisplays();
         List<WindowsDisplaySnapshot.SourceDevMode> sourceModes = new ArrayList<>();
-        for (DisplayInfo display : discovery.discoverDisplays()) {
-            if (display.active() && !display.gdiDeviceName().isBlank()) {
+        Set<String> capturedGdiSources = new LinkedHashSet<>();
+        for (DisplayInfo display : displays) {
+            if (display.active() && !display.gdiDeviceName().isBlank()
+                    && capturedGdiSources.add(display.gdiDeviceName().toUpperCase(java.util.Locale.ROOT))) {
                 sourceModes.add(new WindowsDisplaySnapshot.SourceDevMode(
                         display.gdiDeviceName(), readCurrentDevModeBytes(display.gdiDeviceName())));
             }
         }
+        boolean targetWasIndependent = isUsableExtendedTarget(target, displays);
         return new WindowsDisplaySnapshot(
                 discovery.currentTopologyFingerprint(),
                 topology.topologyId(),
-                target.gdiDeviceName(),
+                targetWasIndependent ? target.gdiDeviceName() : "",
                 target.targetAddress(),
-                Objects.requireNonNull(target.currentMode(), "target.currentMode"),
+                targetWasIndependent ? target.currentMode() : null,
                 topology.pathCount(),
                 topology.pathBytes(),
                 topology.modeCount(),
@@ -90,36 +96,41 @@ public final class WindowsDisplayMutator {
      * Converts the current desktop to temporary extended topology only after an explicit caller confirmation.
      * It intentionally never uses SDC_SAVE_TO_DATABASE.
      */
-    public void ensureExtendedTopology(DisplayInfo target, boolean confirmedByUser) throws IOException {
-        requireWindows();
+    public DisplayInfo ensureExtendedTopology(DisplayInfo target, boolean confirmedByUser) throws IOException {
+        requireSelectableExternalTarget(target, confirmedByUser);
         if (isUsableExtendedTarget(target, discovery.discoverDisplays())) {
-            return;
+            return target;
         }
         if (!confirmedByUser) {
             throw new IOException("Switching Windows to extended desktop requires explicit confirmation");
         }
         int status = user32.SetDisplayConfig(0, null, 0, null, SDC_APPLY | SDC_TOPOLOGY_EXTEND);
         requireSuccess("SetDisplayConfig(SDC_TOPOLOGY_EXTEND)", status);
-        waitForTopology(target, null, true);
+        return waitForTopology(target.targetAddress(), "", null, true);
     }
 
     /** Tests, applies and verifies a temporary target-only mode. On any post-apply error it restores the snapshot. */
-    public DisplayMode applyTemporaryMode(WindowsDisplaySnapshot snapshot, DisplayMode requested) throws IOException {
+    public DisplayMode applyTemporaryMode(
+            WindowsDisplaySnapshot snapshot,
+            DisplayInfo activeTarget,
+            DisplayMode requested
+    ) throws IOException {
         Objects.requireNonNull(snapshot, "snapshot");
+        Objects.requireNonNull(activeTarget, "activeTarget");
         Objects.requireNonNull(requested, "requested");
-        requireWindows();
-        WindowsDisplayDiscovery.DevModeW candidate = createRequestedMode(snapshot.targetGdiDeviceName(), requested);
-        int testStatus = user32.ChangeDisplaySettingsExW(snapshot.targetGdiDeviceName(), candidate, null, CDS_TEST, null);
+        requireIndependentActiveTarget(activeTarget, true);
+        WindowsDisplayDiscovery.DevModeW candidate = createRequestedMode(activeTarget.gdiDeviceName(), requested);
+        int testStatus = user32.ChangeDisplaySettingsExW(activeTarget.gdiDeviceName(), candidate, null, CDS_TEST, null);
         if (testStatus != DISP_CHANGE_SUCCESSFUL) {
             throw new IOException("ChangeDisplaySettingsExW(CDS_TEST) rejected the requested mode with code " + testStatus);
         }
 
-        int applyStatus = user32.ChangeDisplaySettingsExW(snapshot.targetGdiDeviceName(), candidate, null, 0, null);
+        int applyStatus = user32.ChangeDisplaySettingsExW(activeTarget.gdiDeviceName(), candidate, null, 0, null);
         if (applyStatus != DISP_CHANGE_SUCCESSFUL) {
             throw new IOException("ChangeDisplaySettingsExW could not apply the requested mode, code " + applyStatus);
         }
         try {
-            return waitForTopology(snapshot, requested, false);
+            return waitForTopology(activeTarget.targetAddress(), activeTarget.gdiDeviceName(), requested, false).currentMode();
         } catch (IOException verificationFailure) {
             try {
                 restore(snapshot);
@@ -141,8 +152,12 @@ public final class WindowsDisplayMutator {
             int fallback = user32.SetDisplayConfig(0, null, 0, null, SDC_APPLY | SDC_USE_DATABASE_CURRENT);
             requireSuccess("SetDisplayConfig(SDC_USE_DATABASE_CURRENT)", fallback);
         }
-        restoreTargetDevMode(snapshot);
-        waitForTopology(snapshot, snapshot.targetMode(), false);
+        if (snapshot.hasOriginalTargetMode()) {
+            restoreTargetDevMode(snapshot);
+            waitForTopology(snapshot.targetAddress(), snapshot.targetGdiDeviceName(), snapshot.targetMode(), false);
+        } else {
+            waitForOriginalTopologyFingerprint(snapshot);
+        }
     }
 
     public WindowsDisplaySnapshot snapshotFrom(RecoveryRecord record) {
@@ -176,19 +191,7 @@ public final class WindowsDisplayMutator {
         }
     }
 
-    private DisplayMode waitForTopology(
-            WindowsDisplaySnapshot snapshot,
-            DisplayMode expectedMode,
-            boolean requireExtended
-    ) throws IOException {
-        return waitForTopology(snapshot.targetAddress(), snapshot.targetGdiDeviceName(), expectedMode, requireExtended);
-    }
-
-    private void waitForTopology(DisplayInfo target, DisplayMode ignored, boolean requireExtended) throws IOException {
-        waitForTopology(target.targetAddress(), target.gdiDeviceName(), null, requireExtended);
-    }
-
-    private DisplayMode waitForTopology(
+    private DisplayInfo waitForTopology(
             ru.pavelkuzmin.screenpilot.domain.display.DisplayTargetAddress targetAddress,
             String targetGdi,
             DisplayMode expectedMode,
@@ -205,10 +208,11 @@ public final class WindowsDisplayMutator {
                         .findFirst()
                         .orElse(null);
                 if (actual != null && actual.active() && actual.currentMode() != null
-                        && actual.gdiDeviceName().equalsIgnoreCase(targetGdi)
+                        && (targetGdi == null || targetGdi.isBlank()
+                        || actual.gdiDeviceName().equalsIgnoreCase(targetGdi))
                         && (!requireExtended || isUsableExtendedTarget(actual, displays))
                         && (expectedMode == null || sameMode(actual.currentMode(), expectedMode))) {
-                    return actual.currentMode();
+                    return actual;
                 }
                 lastObservation = describeObservation(actual, expectedMode, requireExtended, displays);
             } catch (IOException exception) {
@@ -220,6 +224,25 @@ public final class WindowsDisplayMutator {
         throw new IOException("Windows did not report the requested display state within " + TOPOLOGY_TIMEOUT
                 + "; last observation: " + lastObservation,
                 lastFailure);
+    }
+
+    private void waitForOriginalTopologyFingerprint(WindowsDisplaySnapshot snapshot) throws IOException {
+        long deadline = System.nanoTime() + TOPOLOGY_TIMEOUT.toNanos();
+        IOException lastFailure = null;
+        String lastFingerprint = "unavailable";
+        do {
+            try {
+                lastFingerprint = discovery.currentTopologyFingerprint();
+                if (snapshot.topologyFingerprint().equals(lastFingerprint)) {
+                    return;
+                }
+            } catch (IOException exception) {
+                lastFailure = exception;
+            }
+            sleepForTopology();
+        } while (System.nanoTime() < deadline);
+        throw new IOException("Windows did not restore the original topology fingerprint within " + TOPOLOGY_TIMEOUT
+                + "; last fingerprint=" + lastFingerprint, lastFailure);
     }
 
     private static String describeObservation(
@@ -246,7 +269,7 @@ public final class WindowsDisplayMutator {
                 + "/" + mode.bitsPerPixel() + (mode.interlaced() ? "i" : "p");
     }
 
-    private static boolean isUsableExtendedTarget(DisplayInfo target, List<DisplayInfo> displays) {
+    static boolean isUsableExtendedTarget(DisplayInfo target, List<DisplayInfo> displays) {
         if (!target.active() || target.internal() || target.gdiDeviceName().isBlank()) {
             return false;
         }
@@ -387,17 +410,24 @@ public final class WindowsDisplayMutator {
         }
     }
 
-    private static void requireMutableTarget(DisplayInfo target, boolean targetWasExplicitlyConfirmed) throws IOException {
+    private static void requireSelectableExternalTarget(DisplayInfo target, boolean targetWasExplicitlyConfirmed) throws IOException {
         requireWindows();
         Objects.requireNonNull(target, "target");
-        if (target.internal() || !target.active() || target.currentMode() == null || target.gdiDeviceName().isBlank()) {
-            throw new IOException("A connected active external display with a GDI device name is required");
-        }
-        if (target.primary()) {
-            throw new IOException("ScreenPilot never changes the primary display");
+        if (target.internal() || !target.active() && !target.targetAvailable()) {
+            throw new IOException("A connected or available external display target is required");
         }
         if (target.gdiMappingConfidence() != GdiMappingConfidence.AUTHORITATIVE && !targetWasExplicitlyConfirmed) {
             throw new IOException("The driver did not provide authoritative target-to-GDI mapping; explicit confirmation is required");
+        }
+    }
+
+    private void requireIndependentActiveTarget(DisplayInfo target, boolean targetWasExplicitlyConfirmed) throws IOException {
+        requireSelectableExternalTarget(target, targetWasExplicitlyConfirmed);
+        if (!isUsableExtendedTarget(target, discovery.discoverDisplays()) || target.currentMode() == null) {
+            throw new IOException("An active external target on a separate extended desktop is required before changing its mode");
+        }
+        if (target.primary()) {
+            throw new IOException("ScreenPilot never changes the primary display");
         }
     }
 
