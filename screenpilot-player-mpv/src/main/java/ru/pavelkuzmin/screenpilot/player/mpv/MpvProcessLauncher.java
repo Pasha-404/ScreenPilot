@@ -5,7 +5,7 @@ import java.lang.ProcessBuilder.Redirect;
 import java.util.Objects;
 
 /** Starts mpv without a shell, preserving every command-line argument as a separate token. */
-public final class MpvProcessLauncher {
+public final class MpvProcessLauncher implements MpvProcessStarter {
 
     public Process launch(MpvLaunchProfile profile) throws IOException {
         Objects.requireNonNull(profile, "profile");
@@ -13,5 +13,10 @@ public final class MpvProcessLauncher {
                 .redirectErrorStream(true)
                 .redirectOutput(Redirect.DISCARD)
                 .start();
+    }
+
+    @Override
+    public Process start(MpvLaunchProfile profile) throws IOException {
+        return launch(profile);
     }
 }

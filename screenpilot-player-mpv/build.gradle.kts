@@ -14,6 +14,8 @@ java {
 dependencies {
     api(project(":screenpilot-domain"))
     implementation(libs.jackson.databind)
+    implementation(libs.jna)
+    implementation(libs.jna.platform)
     implementation(libs.slf4j.api)
 
     testImplementation(platform(libs.junit.bom))
@@ -28,6 +30,7 @@ testing {
             useJUnitJupiter(libs.versions.junit.get())
             dependencies {
                 implementation(project())
+                implementation(libs.assertj.core)
             }
             targets.all {
                 testTask.configure {

@@ -35,9 +35,35 @@ public record MpvLaunchProfile(Path executable, String ipcPipe, String windowTit
             throw new IllegalArgumentException("targetScreen must be zero or greater");
         }
 
+        MpvLaunchProfile profile = create(executable, sessionId, "ScreenPilot mpv spike ", false);
+        List<String> arguments = new ArrayList<>(profile.arguments());
+        if (targetScreen != null) {
+            arguments.add("--screen=" + targetScreen);
+            arguments.add("--fullscreen");
+            arguments.add("--fs-screen=" + targetScreen);
+        }
+        return new MpvLaunchProfile(profile.executable(), profile.ipcPipe(), profile.windowTitle(), arguments);
+    }
+
+    /** Production Stage 4 profile. Screen placement stays outside this adapter until Stage 5. */
+    public static MpvLaunchProfile forPlayer(Path executable, UUID sessionId, boolean softwareDecode) {
+        return create(executable, sessionId, "ScreenPilot Output ", softwareDecode);
+    }
+
+    /** Real-mpv integration profile with no video or audio output; never use in the application. */
+    static MpvLaunchProfile forHeadlessTest(Path executable, UUID sessionId) {
+        MpvLaunchProfile profile = create(executable, sessionId, "ScreenPilot test ", false);
+        List<String> arguments = new ArrayList<>(profile.arguments());
+        arguments.add("--vo=null");
+        arguments.add("--ao=null");
+        return new MpvLaunchProfile(profile.executable(), profile.ipcPipe(), profile.windowTitle(), arguments);
+    }
+
+    private static MpvLaunchProfile create(Path executable, UUID sessionId, String titlePrefix, boolean softwareDecode) {
+        Objects.requireNonNull(sessionId, "sessionId");
         String suffix = sessionId.toString();
         String pipe = WINDOWS_PIPE_PREFIX + "screenpilot-mpv-" + suffix;
-        String title = "ScreenPilot mpv spike " + suffix;
+        String title = titlePrefix + suffix;
         List<String> arguments = new ArrayList<>(List.of(
                 "--no-config",
                 "--idle=yes",
@@ -50,16 +76,11 @@ public record MpvLaunchProfile(Path executable, String ipcPipe, String windowTit
                 "--ontop=yes",
                 "--vo=gpu-next",
                 "--gpu-context=d3d11",
-                "--hwdec=auto-safe",
+                "--hwdec=" + (softwareDecode ? "no" : "auto-safe"),
                 "--audio-client-name=ScreenPilot",
                 "--input-ipc-server=" + pipe,
                 "--title=" + title
         ));
-        if (targetScreen != null) {
-            arguments.add("--screen=" + targetScreen);
-            arguments.add("--fullscreen");
-            arguments.add("--fs-screen=" + targetScreen);
-        }
         return new MpvLaunchProfile(executable, pipe, title, arguments);
     }
 

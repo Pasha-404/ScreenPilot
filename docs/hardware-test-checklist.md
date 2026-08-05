@@ -7,6 +7,7 @@
 | JDK 21 и Gradle-каркас | PASS | JDK `21.0.10`; `clean test integrationTest` проходит. |
 | Запуск mpv без пользовательского config | PASS | `mpv v0.41.0-744-g304426c39`, флаг `--no-config`. |
 | JSON IPC по Windows named pipe | PASS | Проверены JSON command/response с `request_id`. |
+| Production mpv adapter | PASS | Реальный `MpvPlayerAdapterIntegrationTest`: `mpv.exe` через Windows overlapped I/O выполнил load, pause, seek, play и stop с `--vo=null --ao=null`; настройки Windows не менялись. |
 | H.264 playback | PASS | Локальный 640×360 H.264 fixture; `hwdec-current="d3d11va"`. |
 | HEVC Main 10 playback | PASS | Локальный 640×360 HEVC Main 10 fixture; `hwdec-current="d3d11va"`. |
 | Фактический hwdec | PASS | D3D11VA подтверждён для H.264 и HEVC Main 10. |

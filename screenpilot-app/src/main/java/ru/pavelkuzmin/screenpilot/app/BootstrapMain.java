@@ -19,6 +19,9 @@ public final class BootstrapMain {
         if (args.length > 0 && "display-poll-smoke".equals(args[0])) {
             System.exit(DisplayTopologyProbeMain.runPollingSmoke());
         }
-        System.out.println("ScreenPilot technical prototype. Run with: mpv-spike [path-to-mpv.exe] | display-probe | display-poll-smoke");
+        if (args.length > 0 && "player-demo".equals(args[0])) {
+            System.exit(MpvPlayerDemoMain.run(Arrays.copyOfRange(args, 1, args.length)));
+        }
+        System.out.println("ScreenPilot technical prototype. Run with: mpv-spike [path-to-mpv.exe] | display-probe | display-poll-smoke | player-demo --media=<file>");
     }
 }

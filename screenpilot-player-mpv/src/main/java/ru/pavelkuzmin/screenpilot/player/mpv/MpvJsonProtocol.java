@@ -16,7 +16,7 @@ public final class MpvJsonProtocol {
     private MpvJsonProtocol() {
     }
 
-    public static String encodeCommand(int requestId, List<?> command) throws JsonProcessingException {
+    public static String encodeCommand(long requestId, List<?> command) throws JsonProcessingException {
         if (requestId < 1) {
             throw new IllegalArgumentException("requestId must be positive");
         }
