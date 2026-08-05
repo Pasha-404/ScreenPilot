@@ -14,14 +14,47 @@ public final class BootstrapMain {
             return;
         }
         if (args.length > 0 && "display-probe".equals(args[0])) {
+            if (DisplayMutationSmokeMain.reportPendingRecovery()) {
+                System.exit(2);
+            }
             System.exit(DisplayTopologyProbeMain.run());
         }
         if (args.length > 0 && "display-poll-smoke".equals(args[0])) {
+            if (DisplayMutationSmokeMain.reportPendingRecovery()) {
+                System.exit(2);
+            }
             System.exit(DisplayTopologyProbeMain.runPollingSmoke());
         }
         if (args.length > 0 && "player-demo".equals(args[0])) {
+            if (DisplayMutationSmokeMain.reportPendingRecovery()) {
+                System.exit(2);
+            }
             System.exit(MpvPlayerDemoMain.run(Arrays.copyOfRange(args, 1, args.length)));
         }
-        System.out.println("ScreenPilot technical prototype. Run with: mpv-spike [path-to-mpv.exe] | display-probe | display-poll-smoke | player-demo --media=<file>");
+        if (args.length > 0 && "display-mode-smoke".equals(args[0])) {
+            System.exit(DisplayMutationSmokeMain.runModeSmoke(Arrays.copyOfRange(args, 1, args.length)));
+        }
+        if (args.length > 0 && "display-extend-smoke".equals(args[0])) {
+            System.exit(DisplayMutationSmokeMain.runExtendedTopologySmoke(Arrays.copyOfRange(args, 1, args.length)));
+        }
+        if (args.length > 0 && "display-mode-list".equals(args[0])) {
+            System.exit(DisplayMutationSmokeMain.runModeList(Arrays.copyOfRange(args, 1, args.length)));
+        }
+        if (args.length > 0 && "display-hot-unplug-watch".equals(args[0])) {
+            System.exit(DisplayMutationSmokeMain.runHotUnplugWatch(Arrays.copyOfRange(args, 1, args.length)));
+        }
+        if (args.length > 0 && "display-recover".equals(args[0])) {
+            System.exit(DisplayMutationSmokeMain.runRecovery(Arrays.copyOfRange(args, 1, args.length)));
+        }
+        if (args.length > 0 && "display-keep-current".equals(args[0])) {
+            System.exit(DisplayMutationSmokeMain.runKeepCurrentConfiguration(Arrays.copyOfRange(args, 1, args.length)));
+        }
+        if (DisplayMutationSmokeMain.reportPendingRecovery()) {
+            System.exit(2);
+        }
+        System.out.println("ScreenPilot technical prototype. Run with: mpv-spike [path-to-mpv.exe] | display-probe | "
+                + "display-poll-smoke | player-demo --media=<file> | display-mode-smoke --confirm | "
+                + "display-mode-list | display-hot-unplug-watch --hold-ms=30000 | display-extend-smoke --confirm | "
+                + "display-recover --confirm");
     }
 }

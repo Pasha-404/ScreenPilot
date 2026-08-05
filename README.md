@@ -1,10 +1,10 @@
 # ScreenPilot
 
-> Обновление от 05.08.2026: этап 4 реализован. Есть production-адаптер mpv с JSON IPC, событиями, тайм-аутами, контролируемым завершением и однократным fallback с hardware decoding на software decoding. Полноценный JavaFX-интерфейс пока намеренно не начат.
+> Обновление от 05.08.2026: реализована программная часть этапа 5 и пройдены первые реальные проверки смены режима и recovery. Этап ещё не принят: остаются отдельные аппаратные проверки перехода из clone/неактивного target и hot unplug во время вывода.
 
 ScreenPilot — Windows-приложение для управления воспроизведением локального видео на одном внешнем экране. Панель управления остаётся на ноутбуке, а видео выводится отдельным полноэкранным окном только на выбранный display target.
 
-Текущий статус: этапы 0–4 завершены; mpv/Windows gate принят для разработки MVP. Реализованы read-only обнаружение экранов и опрос топологии, а также production-адаптер плеера. Полноценный интерфейс и пользовательские функции ещё не реализованы.
+Текущий статус: этапы 0–4 завершены; этап 5 в работе. mpv/Windows gate принят для разработки MVP. Реализованы read-only обнаружение экранов, опрос topology, production-адаптер плеера и безопасный технический контур изменения экрана с recovery journal. Полноценный интерфейс и пользовательские функции ещё не реализованы.
 
 ## Требования для разработки
 
@@ -48,6 +48,26 @@ ScreenPilot — Windows-приложение для управления вос�
 
 Первая команда выводит известные Windows display targets, GDI-имя, текущий и доступные режимы. Вторая на одну итерацию запускает фоновый `display-poller`: его лёгкая проверка topology выполняется раз в секунду, а полное перечисление режимов — лишь при изменении хеша.
 
+### Аппаратная проверка этапа 5
+
+Команды ниже меняют только явно выбранный внешний экран. Перед любой изменяющей командой создаётся атомарный snapshot в `%LOCALAPPDATA%\ScreenPilot\recovery`; встроенный экран и Windows default audio не меняются. Не запускайте одновременно второй экземпляр приложения. На текущем AMD-драйвере используется fallback GDI-связь, поэтому `--confirm` обязателен.
+
+```powershell
+# Только чтение: показать modes, которые драйвер подтвердил через DEVMODE.
+.\gradlew.bat :screenpilot-app:run --args="display-mode-list"
+
+# Временно применить подтверждённый режим внешнего экрана и автоматически восстановить snapshot.
+.\gradlew.bat :screenpilot-app:run --args="display-mode-smoke --confirm --mode=1280x720@60 --hold-ms=3000"
+
+# Убедиться, что активны раздельные internal/external desktop; при необходимости команда временно просит Windows Extend.
+.\gradlew.bat :screenpilot-app:run --args="display-extend-smoke --confirm --hold-ms=0"
+
+# Если предыдущий процесс завершился до rollback, сначала выполняется только эта команда.
+.\gradlew.bat :screenpilot-app:run --args="display-recover --confirm"
+```
+
+`display-mode-smoke` принимает только режим, перечисленный `display-mode-list`; дробная частота не округляется до целой. Если журнал остался активным, обычная работа блокируется до `display-recover --confirm` или явного `display-keep-current --confirm`. Для отдельной read-only проверки unplug есть `display-hot-unplug-watch --hold-ms=30000`; вынимать HDMI следует только когда команда уже сообщила, что наблюдение началось.
+
 После того как пользователь включил режим «Расширить», ручная проверка выбранного экрана выполняется так:
 
 ```powershell
@@ -76,6 +96,7 @@ ScreenPilot — Windows-приложение для управления вос�
 - read-only Windows adapter: `QueryDisplayConfig`, запросы `DisplayConfigGetDeviceInfo`, `EnumDisplaySettingsExW`, физические bounds, HDMI/internal/DisplayPort classification и rational refresh;
 - безопасный `display-poller` с интервалом 1 с, fake fixtures и unit-тестами: полная discovery выполняется только при изменении topology;
 - отдельный hardware integration test и консольный probe; проверенная текущая конфигурация — HDMI target `\\.\DISPLAY2`, 1920×1080 @ 59,940 Гц.
+- Stage 5: lossless snapshot `DISPLAYCONFIG_*` + активные `DEVMODEW`, проверяемая временная смена режима без `CDS_UPDATEREGISTRY`, rollback, persisted recovery journal, archive на семь дней и startup guard; подробности — в [ADR-0004](docs/adr/0004-display-mutation-recovery.md).
 
 На эталонном AMD-драйвере Windows возвращает `ERROR_GEN_FAILURE` для запросов `DisplayConfigGetDeviceInfo`, хотя сами path-данные исправны. В этом случае ScreenPilot явно помечает `gdiMapping=FALLBACK`, использует `EnumDisplayDevicesW` только для read-only диагностики и не считает такую привязку достаточной для будущих автоматических изменений конфигурации. Решение и ограничения зафиксированы в [ADR-0002](docs/adr/0002-display-discovery-fallback.md).
 

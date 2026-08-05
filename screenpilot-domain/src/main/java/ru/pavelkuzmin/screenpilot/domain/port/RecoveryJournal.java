@@ -11,4 +11,7 @@ public interface RecoveryJournal {
     void begin(RecoveryRecord record);
 
     void markRestored(UUID sessionId);
+
+    /** Closes a journal after the user deliberately keeps the current Windows configuration. */
+    void markLeftAsIs(UUID sessionId);
 }
