@@ -31,6 +31,10 @@
 - На драйверах с `FALLBACK` пользователь перед подтверждением видит target и GDI-имя в диагностике. Это снижает риск операции не с тем экраном, но не делает fallback полностью авторитетным.
 - Если после `SDC_TOPOLOGY_EXTEND` Windows активировала не выбранный target, ScreenPilot не продолжает к смене режима: выполняется rollback, а пользователь должен повторно выбрать экран. Это безопаснее неявного вывода на другой монитор.
 
+## Аппаратная проверка
+
+На эталонном Windows 10 build 19045 HDMI target в режиме clone не имел отдельного GDI-имени. `display-extend-smoke --confirm --hold-ms=3000` временно активировал тот же target как `\\.\DISPLAY2`, затем восстановил исходный clone и закрыл recovery journal. Отдельная команда polling также увидела физическое отключение HDMI на следующем секундном опросе. Детали — в [hardware-test-checklist.md](../hardware-test-checklist.md).
+
 ## Источники
 
 - [Microsoft: SetDisplayConfig](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setdisplayconfig)
