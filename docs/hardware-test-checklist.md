@@ -29,5 +29,10 @@
 | Переход из clone к Extend и rollback | PASS | HDMI target `257` в clone не имел отдельного GDI-имени и режима. `display-extend-smoke` сохранил snapshot, временно включил Extend, повторно обнаружил тот же target как `\\.\DISPLAY2`, удержал состояние 3 с и восстановил исходный clone. Journal закрыт. |
 | Отключение HDMI во время polling | PASS | Во время `display-hot-unplug-watch --hold-ms=30000` кабель физически отключён. `display-poller` обнаружил исчезновение target `\\.\DISPLAY2` на своём секундном интервале; Java-процесс завершился штатно. |
 | Отключение HDMI во время активного video output | PASS | `output-hot-unplug-smoke` запустил локальный MP4 на mpv screen `1` и сопоставил HDMI `\\.\DISPLAY2` по `DisplayTargetAddress`. При физическом отключении кабеля `WindowsDisplayPoller` увидел потерю target, mpv был остановлен, а Job Object освобождён. |
+| UI этапа 6: запуск одного файла на выбранном HDMI-target | PASS | 07.08.2026: в JavaFX UI выбран локальный файл и `Generic PnP Monitor` (HDMI, `DISPLAY2`) в extended mode. Видео открылось на внешнем мониторе; на ноутбуке остался только UI. |
+| UI этапа 6: пауза и перемотка ±10 секунд | PASS | 07.08.2026: пользователь подтвердил работу паузы, «+10 с» и «−10 с» во время реального воспроизведения. |
+| UI этапа 6: «Остановить вывод» и сохранение extended mode | PASS | 07.08.2026: кнопка закрыла воспроизведение/mpv, оставила HDMI-монитор в extended mode и вернула UI в исходное состояние. После закрытия приложения journal recovery был пуст. |
+| UI этапа 6: масштабирование, громкость и локальные hotkeys | NOT TESTED | Controls реализованы, но ручная проверка на внешнем экране ещё не выполнялась. |
+| UI этапа 6: отключение HDMI во время UI-сессии | NOT TESTED | Тот же production-контур mpv/poller уже проверен техническим `output-hot-unplug-smoke`; именно пользовательский UI-сценарий не повторялся. |
 
 Эталонная среда: Windows 10 Pro 22H2 build 19045; AMD Radeon Graphics driver `31.0.12046.15003`; mpv `v0.41.0-744-g304426c39`. Windows видит внешний HDMI `DISPLAY2` 1920×1080 @ 59,940 Гц в extended mode.

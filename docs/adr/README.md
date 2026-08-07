@@ -15,3 +15,4 @@
 - `0002-display-discovery-fallback.md` — работа с драйвером, который отдаёт paths, но отклоняет пакеты `DisplayConfigGetDeviceInfo`.
 - `0003-mpv-overlapped-ipc.md` — асинхронный JSON IPC для Windows named pipe в production-адаптере mpv.
 - `0004-display-mutation-recovery.md` — временные изменения topology/режима только после snapshot и с recovery journal.
+- `0005-javafx-ui-state-and-output-placement.md` — единое состояние JavaFX и обязательная проверка размещения окна mpv на физическом target.

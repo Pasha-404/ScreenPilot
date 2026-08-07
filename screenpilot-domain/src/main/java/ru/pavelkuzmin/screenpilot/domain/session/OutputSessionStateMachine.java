@@ -23,18 +23,18 @@ public final class OutputSessionStateMachine {
             };
             case PREPARING_DISPLAY -> switch (event) {
                 case DISPLAY_PREPARED -> OutputSessionState.OUTPUT_IDLE;
-                case PREPARATION_FAILED, TARGET_LOST -> OutputSessionState.OUTPUT_ERROR;
+                case PREPARATION_FAILED, TARGET_LOST, OUTPUT_FAILED -> OutputSessionState.OUTPUT_ERROR;
                 default -> invalid(state, event);
             };
             case OUTPUT_IDLE -> switch (event) {
                 case FILE_LOADED -> OutputSessionState.OUTPUT_ACTIVE;
                 case STOP_OUTPUT_REQUESTED -> OutputSessionState.RESTORING_DISPLAY;
-                case TARGET_LOST -> OutputSessionState.OUTPUT_ERROR;
+                case TARGET_LOST, OUTPUT_FAILED -> OutputSessionState.OUTPUT_ERROR;
                 default -> invalid(state, event);
             };
             case OUTPUT_ACTIVE -> switch (event) {
                 case STOP_OUTPUT_REQUESTED -> OutputSessionState.RESTORING_DISPLAY;
-                case TARGET_LOST -> OutputSessionState.OUTPUT_ERROR;
+                case TARGET_LOST, OUTPUT_FAILED -> OutputSessionState.OUTPUT_ERROR;
                 default -> invalid(state, event);
             };
             case RESTORING_DISPLAY -> switch (event) {

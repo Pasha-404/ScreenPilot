@@ -29,6 +29,19 @@ class StateMachineTest {
     }
 
     @Test
+    void movesToOutputErrorWhenAnActivePlayerFails() {
+        OutputSessionState state = OutputSessionState.NO_TARGET;
+        state = OutputSessionStateMachine.transition(state, OutputSessionEvent.TARGET_SELECTED);
+        state = OutputSessionStateMachine.transition(state, OutputSessionEvent.START_REQUESTED);
+        state = OutputSessionStateMachine.transition(state, OutputSessionEvent.DISPLAY_PREPARED);
+        state = OutputSessionStateMachine.transition(state, OutputSessionEvent.FILE_LOADED);
+
+        state = OutputSessionStateMachine.transition(state, OutputSessionEvent.OUTPUT_FAILED);
+
+        assertThat(state).isEqualTo(OutputSessionState.OUTPUT_ERROR);
+    }
+
+    @Test
     void retainsApplicationAfterPlayerFailureAndAllowsShutdown() {
         PlayerState state = PlayerStateMachine.transition(PlayerState.STOPPED, PlayerEvent.START_REQUESTED);
         state = PlayerStateMachine.transition(state, PlayerEvent.STARTED);

@@ -9,6 +9,10 @@ public final class BootstrapMain {
     }
 
     public static void main(String[] args) {
+        if (args.length == 0) {
+            ru.pavelkuzmin.screenpilot.app.ui.ScreenPilotApplication.launchApplication(args);
+            return;
+        }
         if (args.length > 0 && "mpv-spike".equals(args[0])) {
             MpvSpikeMain.main(Arrays.copyOfRange(args, 1, args.length));
             return;

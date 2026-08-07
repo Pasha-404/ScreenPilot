@@ -73,6 +73,7 @@ public final class MpvPlayerAdapter implements AutoCloseable {
     private boolean softwareDecode;
     private boolean fallbackAttempted;
     private boolean pauseAfterLoad;
+    private volatile String windowTitle;
 
     public MpvPlayerAdapter(Path executable, ProcessContainment containment) {
         this(executable, new MpvProcessLauncher(), containment, MpvIpcClient::connect, MpvLaunchProfile::forPlayer);
@@ -109,6 +110,11 @@ public final class MpvPlayerAdapter implements AutoCloseable {
 
     public PlayerState state() {
         return state;
+    }
+
+    /** Unique title of the current mpv output window, available after a successful start. */
+    public Optional<String> windowTitle() {
+        return Optional.ofNullable(windowTitle);
     }
 
     public Flow.Publisher<PlayerNotification> notifications() {
@@ -324,6 +330,7 @@ public final class MpvPlayerAdapter implements AutoCloseable {
         stopRequested = false;
         softwareDecode = useSoftwareDecode;
         MpvLaunchProfile profile = profileFactory.create(executable, UUID.randomUUID(), useSoftwareDecode);
+        windowTitle = profile.windowTitle();
         process = processStarter.start(profile);
         try {
             containmentHandle = containment.attach(process);
@@ -589,6 +596,7 @@ public final class MpvPlayerAdapter implements AutoCloseable {
         lastDuration = Optional.empty();
         pendingLoad = null;
         pauseAfterLoad = false;
+        windowTitle = null;
         publishState(PlayerState.STOPPED);
     }
 
