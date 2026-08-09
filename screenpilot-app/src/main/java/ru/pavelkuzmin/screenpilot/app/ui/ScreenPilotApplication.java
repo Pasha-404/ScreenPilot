@@ -3,15 +3,26 @@ package ru.pavelkuzmin.screenpilot.app.ui;
 import javafx.application.Application;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Scene;
+import javafx.scene.image.Image;
 import javafx.scene.layout.Pane;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
 
 import java.io.IOException;
 import java.net.URL;
+import java.util.List;
 
 /** Production JavaFX entry point. Technical console tools remain available through BootstrapMain arguments. */
 public final class ScreenPilotApplication extends Application {
+
+    private static final List<String> WINDOW_ICON_RESOURCES = List.of(
+            "/ru/pavelkuzmin/screenpilot/app/ui/icons/screenpilot-icon-16.png",
+            "/ru/pavelkuzmin/screenpilot/app/ui/icons/screenpilot-icon-32.png",
+            "/ru/pavelkuzmin/screenpilot/app/ui/icons/screenpilot-icon-48.png",
+            "/ru/pavelkuzmin/screenpilot/app/ui/icons/screenpilot-icon-64.png",
+            "/ru/pavelkuzmin/screenpilot/app/ui/icons/screenpilot-icon-128.png",
+            "/ru/pavelkuzmin/screenpilot/app/ui/icons/screenpilot-icon-256.png"
+    );
 
     private ScreenPilotApplicationService service;
     private MainViewController controller;
@@ -46,6 +57,7 @@ public final class ScreenPilotApplication extends Application {
         scene.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, controller::handleShortcut);
 
         primaryStage.setTitle("ScreenPilot");
+        configureWindowIcons(primaryStage);
         primaryStage.setMinWidth(ResponsiveWindowSize.MIN_WIDTH);
         primaryStage.setMinHeight(ResponsiveWindowSize.MIN_HEIGHT);
         primaryStage.setScene(scene);
@@ -70,6 +82,15 @@ public final class ScreenPilotApplication extends Application {
         }
         if (service != null) {
             service.close();
+        }
+    }
+
+    static void configureWindowIcons(Stage stage) {
+        for (String resource : WINDOW_ICON_RESOURCES) {
+            URL icon = ScreenPilotApplication.class.getResource(resource);
+            if (icon != null) {
+                stage.getIcons().add(new Image(icon.toExternalForm(), false));
+            }
         }
     }
 }

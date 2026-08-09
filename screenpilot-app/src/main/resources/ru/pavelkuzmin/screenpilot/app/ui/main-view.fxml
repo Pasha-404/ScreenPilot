@@ -32,32 +32,17 @@
             </VBox>
         </HBox>
     </top>
-    <left>
-        <ScrollPane fitToWidth="true" hbarPolicy="NEVER" vbarPolicy="AS_NEEDED" prefViewportWidth="230" styleClass="side-scroll">
-            <content>
-                <VBox prefWidth="230" spacing="12" styleClass="side-panel">
-                    <padding><Insets top="16" right="16" bottom="16" left="16" /></padding>
-                    <Label text="Видео" styleClass="side-heading" />
-                    <Button fx:id="openMediaButton" text="Открыть файл" onAction="#openMedia" maxWidth="1.7976931348623157E308" styleClass="primary-outline-button" />
-                    <Button fx:id="refreshDisplaysButton" text="Обновить экраны" onAction="#refreshDisplays" maxWidth="1.7976931348623157E308" styleClass="secondary-button" />
-                    <Separator />
-                    <VBox spacing="8" styleClass="side-card">
-                        <Label text="Вывод на внешний экран" styleClass="side-card-title" />
-                        <Label text="Видео всегда остаётся только на выбранном внешнем экране." wrapText="true" styleClass="side-card-text" />
-                    </VBox>
-                    <Region VBox.vgrow="ALWAYS" />
-                    <Label text="Этап 7 · плейлист и resume" styleClass="muted-label" />
-                </VBox>
-            </content>
-        </ScrollPane>
-    </left>
     <center>
         <ScrollPane fitToWidth="true" styleClass="content-scroll">
             <content>
                 <VBox spacing="18" styleClass="content-area">
                     <padding><Insets top="24" right="24" bottom="24" left="24" /></padding>
                     <VBox spacing="10" styleClass="media-card">
-                        <Label text="Текущий файл" styleClass="section-label" />
+                        <HBox alignment="CENTER_LEFT" spacing="12">
+                            <Label text="Текущий файл" styleClass="section-label" />
+                            <Region HBox.hgrow="ALWAYS" />
+                            <Button fx:id="openMediaButton" text="Открыть файлы" onAction="#openMedia" styleClass="primary-outline-button" />
+                        </HBox>
                         <Label fx:id="currentFile" text="Видео пока не выбрано" wrapText="true" styleClass="media-title" />
                         <Label fx:id="fileDetails" text="Откройте один локальный MKV или MP4." wrapText="true" styleClass="muted-label" />
                     </VBox>
@@ -113,7 +98,11 @@
             <padding><Insets top="16" right="20" bottom="16" left="20" /></padding>
             <Label text="Вывод на внешний экран" styleClass="section-title" />
             <VBox spacing="6">
-                <Label text="Устройство" styleClass="field-label" />
+                <HBox alignment="CENTER_LEFT" spacing="8">
+                    <Label text="Устройство" styleClass="field-label" />
+                    <Region HBox.hgrow="ALWAYS" />
+                    <Button fx:id="refreshDisplaysButton" text="Обновить" onAction="#refreshDisplays" styleClass="link-button" />
+                </HBox>
                 <ComboBox fx:id="targetSelector" maxWidth="1.7976931348623157E308" />
             </VBox>
             <VBox spacing="6">

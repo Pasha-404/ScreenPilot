@@ -14,14 +14,10 @@
 .status-title { -fx-text-fill: #69d991; -fx-font-size: 14px; -fx-font-weight: 700; }
 .top-status { -fx-padding: 8 14 8 14; -fx-background-color: #10261f; -fx-background-radius: 10; }
 
-.side-scroll, .output-scroll { -fx-background: transparent; -fx-background-color: transparent; }
-.side-scroll > .viewport, .output-scroll > .viewport { -fx-background-color: transparent; }
-.side-scroll > .scroll-bar:vertical, .output-scroll > .scroll-bar:vertical { -fx-pref-width: 10; }
-.side-panel { -fx-background-color: rgba(8, 19, 33, 0.84); -fx-border-color: transparent #20334d transparent transparent; -fx-border-width: 0 1 0 0; }
-.side-heading { -fx-text-fill: #dce9f8; -fx-font-size: 17px; -fx-font-weight: 700; }
-.side-card { -fx-padding: 16; -fx-background-color: #101f31; -fx-background-radius: 12; -fx-border-color: #223752; -fx-border-radius: 12; }
-.side-card-title, .section-title { -fx-text-fill: #f5f9ff; -fx-font-size: 16px; -fx-font-weight: 700; }
-.side-card-text { -fx-text-fill: #a6b9ce; -fx-font-size: 12px; }
+.output-scroll { -fx-background: transparent; -fx-background-color: transparent; }
+.output-scroll > .viewport { -fx-background-color: transparent; }
+.output-scroll > .scroll-bar:vertical { -fx-pref-width: 10; }
+.section-title { -fx-text-fill: #f5f9ff; -fx-font-size: 16px; -fx-font-weight: 700; }
 
 .content-scroll { -fx-background: transparent; -fx-background-color: transparent; }
 .content-scroll > .viewport { -fx-background-color: transparent; }
@@ -48,6 +44,8 @@
 .primary-button:hover { -fx-background-color: #2786ff; }
 .primary-outline-button { -fx-background-color: #143c72; -fx-text-fill: #eaf4ff; -fx-border-color: #2879d6; -fx-border-radius: 8; }
 .secondary-button { -fx-background-color: #172b42; -fx-text-fill: #dce9f8; -fx-border-color: #2a435e; -fx-border-radius: 8; }
+.link-button { -fx-background-color: transparent; -fx-text-fill: #8fc0ff; -fx-padding: 2 0 2 0; }
+.link-button:hover { -fx-text-fill: #c7e1ff; -fx-underline: true; }
 .selected-toggle-button { -fx-background-color: #174f93; -fx-border-color: #5fa3ff; -fx-text-fill: #ffffff; }
 .play-button { -fx-background-color: #1266e8; -fx-text-fill: white; -fx-font-size: 15px; -fx-padding: 14 26 14 26; }
 .danger-button { -fx-background-color: #291d28; -fx-text-fill: #ffd9df; -fx-border-color: #6e3647; -fx-border-radius: 8; }
