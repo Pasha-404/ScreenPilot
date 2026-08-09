@@ -45,7 +45,25 @@ class MpvPlayerAdapterIntegrationTest {
             assertThat(info.container()).contains("wav");
             assertThat(adapter.state().name()).isEqualTo("IDLE");
         } finally {
-            Files.deleteIfExists(media);
+            deleteAfterMpvRelease(media);
+        }
+    }
+
+    @Test
+    void readsMetadataInASeparateHeadlessProbeWithoutAnExternalDisplay() throws Exception {
+        Path executable = findMpvExecutable();
+        assumeTrue(Files.isRegularFile(executable), "locally provisioned mpv runtime is required");
+        Path media = Files.createTempFile("screenpilot-probe-", ".wav");
+        writeSilentWav(media, 20);
+
+        try (MpvMediaProbe probe = new MpvMediaProbe(executable)) {
+            var info = probe.probe(media).toCompletableFuture().get(15, TimeUnit.SECONDS);
+
+            assertThat(info.source()).isEqualTo(media.toAbsolutePath().normalize());
+            assertThat(info.container()).contains("wav");
+            assertThat(info.duration()).contains(Duration.ofSeconds(20));
+        } finally {
+            deleteAfterMpvRelease(media);
         }
     }
 
@@ -81,6 +99,25 @@ class MpvPlayerAdapterIntegrationTest {
             writeLittleEndianInt(output, dataLength);
             output.write(new byte[dataLength]);
         }
+    }
+
+    private static void deleteAfterMpvRelease(Path media) throws IOException {
+        IOException lastFailure = null;
+        for (int attempt = 0; attempt < 50; attempt++) {
+            try {
+                Files.deleteIfExists(media);
+                return;
+            } catch (IOException exception) {
+                lastFailure = exception;
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw exception;
+                }
+            }
+        }
+        throw lastFailure;
     }
 
     private static void writeLittleEndianInt(DataOutputStream output, int value) throws IOException {

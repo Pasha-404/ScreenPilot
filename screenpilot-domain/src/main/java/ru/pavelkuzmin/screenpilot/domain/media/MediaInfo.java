@@ -3,6 +3,7 @@ package ru.pavelkuzmin.screenpilot.domain.media;
 import ru.pavelkuzmin.screenpilot.domain.display.RefreshRate;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -12,6 +13,7 @@ import java.util.OptionalInt;
 public record MediaInfo(
         Path source,
         String displayName,
+        Optional<Duration> duration,
         Optional<String> container,
         Optional<String> videoCodec,
         Optional<String> videoProfile,
@@ -32,6 +34,7 @@ public record MediaInfo(
         displayName = displayName == null || displayName.isBlank()
                 ? source.getFileName().toString()
                 : displayName.trim();
+        duration = nonNegative(duration, "duration");
         container = safeOptional(container);
         videoCodec = safeOptional(videoCodec);
         videoProfile = safeOptional(videoProfile);
@@ -56,6 +59,14 @@ public record MediaInfo(
     private static OptionalInt nonNegative(OptionalInt value, String name) {
         OptionalInt result = value == null ? OptionalInt.empty() : value;
         if (result.isPresent() && result.getAsInt() < 0) {
+            throw new IllegalArgumentException(name + " must not be negative");
+        }
+        return result;
+    }
+
+    private static Optional<Duration> nonNegative(Optional<Duration> value, String name) {
+        Optional<Duration> result = value == null ? Optional.empty() : value;
+        if (result.isPresent() && result.get().isNegative()) {
             throw new IllegalArgumentException(name + " must not be negative");
         }
         return result;

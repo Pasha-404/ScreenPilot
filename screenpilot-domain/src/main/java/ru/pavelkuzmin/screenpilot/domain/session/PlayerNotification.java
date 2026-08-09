@@ -13,7 +13,7 @@ import java.util.Optional;
 public sealed interface PlayerNotification permits PlayerNotification.StateChanged,
         PlayerNotification.MediaLoaded, PlayerNotification.PlaybackProgress,
         PlayerNotification.TracksChanged, PlayerNotification.AudioOutputsChanged,
-        PlayerNotification.HardwareDecoderChanged, PlayerNotification.Diagnostic,
+        PlayerNotification.HardwareDecoderChanged, PlayerNotification.EndOfFile, PlayerNotification.Diagnostic,
         PlayerNotification.Failure {
 
     record StateChanged(PlayerState state) implements PlayerNotification {
@@ -52,6 +52,10 @@ public sealed interface PlayerNotification permits PlayerNotification.StateChang
         public HardwareDecoderChanged {
             decoder = decoder == null || decoder.isBlank() ? "unknown" : decoder.trim();
         }
+    }
+
+    /** mpv reached the natural end of a file; this is distinct from the user's Stop command. */
+    record EndOfFile() implements PlayerNotification {
     }
 
     record Diagnostic(String code, String message, String technicalDetail) implements PlayerNotification {

@@ -3,9 +3,13 @@ package ru.pavelkuzmin.screenpilot.app.ui;
 import ru.pavelkuzmin.screenpilot.domain.display.DisplayId;
 import ru.pavelkuzmin.screenpilot.domain.display.DisplayInfo;
 import ru.pavelkuzmin.screenpilot.domain.display.DisplayMode;
+import ru.pavelkuzmin.screenpilot.domain.media.Playlist;
+import ru.pavelkuzmin.screenpilot.domain.media.PlaylistItem;
+import ru.pavelkuzmin.screenpilot.domain.media.ResumeEntry;
 import ru.pavelkuzmin.screenpilot.domain.session.OutputSessionState;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -16,6 +20,10 @@ public record ApplicationState(
         String selectedTargetId,
         DisplayMode selectedMode,
         Path selectedMedia,
+        Playlist playlist,
+        Path lastMediaFolder,
+        ResumeEntry resumeOffer,
+        Duration requestedStartPosition,
         OutputSessionState outputState,
         PlaybackUiState playback,
         String userMessage,
@@ -26,13 +34,18 @@ public record ApplicationState(
         displays = List.copyOf(Objects.requireNonNullElse(displays, List.of()));
         selectedTargetId = optionalText(selectedTargetId);
         selectedMedia = selectedMedia == null ? null : selectedMedia.toAbsolutePath().normalize();
+        playlist = playlist == null ? Playlist.empty() : playlist;
+        lastMediaFolder = lastMediaFolder == null ? null : lastMediaFolder.toAbsolutePath().normalize();
+        requestedStartPosition = requestedStartPosition == null || requestedStartPosition.isNegative()
+                ? Duration.ZERO : requestedStartPosition;
         outputState = outputState == null ? OutputSessionState.NO_TARGET : outputState;
         playback = playback == null ? PlaybackUiState.idle() : playback;
         userMessage = optionalText(userMessage);
     }
 
     public static ApplicationState initial() {
-        return new ApplicationState(List.of(), null, null, null, OutputSessionState.NO_TARGET, PlaybackUiState.idle(),
+        return new ApplicationState(List.of(), null, null, null, Playlist.empty(), null, null, Duration.ZERO,
+                OutputSessionState.NO_TARGET, PlaybackUiState.idle(),
                 "Ищу подключённые внешние экраны…", true);
     }
 
@@ -51,11 +64,16 @@ public record ApplicationState(
     }
 
     public boolean readyForOutput() {
-        return selectedMedia != null && selectedTarget().isPresent() && !refreshingDisplays;
+        return selectedMedia != null && resumeOffer == null && selectedTarget().isPresent() && !refreshingDisplays;
+    }
+
+    public Optional<PlaylistItem> selectedPlaylistItem() {
+        return playlist.selectedItem();
     }
 
     ApplicationState withRefreshInProgress() {
-        return new ApplicationState(displays, selectedTargetId, selectedMode, selectedMedia, outputState, playback, userMessage, true);
+        return new ApplicationState(displays, selectedTargetId, selectedMode, selectedMedia, playlist, lastMediaFolder,
+                resumeOffer, requestedStartPosition, outputState, playback, userMessage, true);
     }
 
     ApplicationState withDisplays(List<DisplayInfo> discovered) {
@@ -73,7 +91,7 @@ public record ApplicationState(
         DisplayMode mode = targets.stream()
                 .filter(display -> display.id().value().equals(selected))
                 .findFirst()
-                .map(DisplayInfo::currentMode)
+                .map(target -> retainSelectedMode(target, selectedMode))
                 .orElse(null);
         OutputSessionState nextState = selected == null ? OutputSessionState.NO_TARGET : OutputSessionState.TARGET_READY;
         String message = targets.isEmpty()
@@ -81,7 +99,8 @@ public record ApplicationState(
                 : targets.size() == 1
                 ? "Внешний экран подключён. Выберите видеофайл."
                 : "Выберите внешний экран для вывода видео.";
-        return new ApplicationState(safeDisplays, selected, mode, selectedMedia, nextState, playback, message, false);
+        return new ApplicationState(safeDisplays, selected, mode, selectedMedia, playlist, lastMediaFolder,
+                resumeOffer, requestedStartPosition, nextState, playback, message, false);
     }
 
     ApplicationState withSelectedTarget(DisplayInfo target) {
@@ -90,7 +109,8 @@ public record ApplicationState(
         if (!isKnownExternal) {
             throw new IllegalArgumentException("Only a currently available external target can be selected");
         }
-        return new ApplicationState(displays, target.id().value(), target.currentMode(), selectedMedia, OutputSessionState.TARGET_READY, playback,
+        return new ApplicationState(displays, target.id().value(), target.currentMode(), selectedMedia, playlist, lastMediaFolder,
+                resumeOffer, requestedStartPosition, OutputSessionState.TARGET_READY, playback,
                 "Выбран экран: " + target.friendlyName() + ".", false);
     }
 
@@ -100,29 +120,75 @@ public record ApplicationState(
         if (mode == null || !target.confirmedModes().contains(mode)) {
             throw new IllegalArgumentException("Only a confirmed mode of the selected target can be selected");
         }
-        return new ApplicationState(displays, selectedTargetId, mode, selectedMedia, outputState, playback,
+        return new ApplicationState(displays, selectedTargetId, mode, selectedMedia, playlist, lastMediaFolder,
+                resumeOffer, requestedStartPosition, outputState, playback,
                 "Выбран режим: " + mode.width() + " × " + mode.height() + ".", false);
     }
 
     ApplicationState withSelectedMedia(Path media) {
-        return new ApplicationState(displays, selectedTargetId, selectedMode, Objects.requireNonNull(media, "media"), outputState, playback,
+        return new ApplicationState(displays, selectedTargetId, selectedMode, Objects.requireNonNull(media, "media"), playlist,
+                lastMediaFolder, null, Duration.ZERO, outputState, playback,
                 "Файл выбран. Проверьте экран и параметры вывода.", false);
     }
 
+    ApplicationState withPlaylist(Playlist nextPlaylist, ResumeEntry nextResumeOffer, String message) {
+        Playlist safePlaylist = Objects.requireNonNull(nextPlaylist, "nextPlaylist");
+        Path media = safePlaylist.selectedItem().map(PlaylistItem::source).orElse(null);
+        return new ApplicationState(displays, selectedTargetId, selectedMode, media, safePlaylist, lastMediaFolder,
+                nextResumeOffer, Duration.ZERO, outputState, playback, message, false);
+    }
+
+    ApplicationState withResumeDecision(boolean resume) {
+        if (resumeOffer == null) {
+            return this;
+        }
+        Duration position = resume ? resumeOffer.position() : Duration.ZERO;
+        String message = resume ? "Продолжу просмотр с сохранённой позиции." : "Видео начнётся с начала.";
+        return new ApplicationState(displays, selectedTargetId, selectedMode, selectedMedia, playlist, lastMediaFolder,
+                null, position, outputState, playback, message, false);
+    }
+
+    ApplicationState withLastMediaFolder(Path folder) {
+        return new ApplicationState(displays, selectedTargetId, selectedMode, selectedMedia, playlist,
+                Objects.requireNonNull(folder, "folder"), resumeOffer, requestedStartPosition,
+                outputState, playback, userMessage, false);
+    }
+
+    ApplicationState withProbedPlaylistItem(PlaylistItem item) {
+        Playlist nextPlaylist = playlist.replace(Objects.requireNonNull(item, "item"));
+        return new ApplicationState(displays, selectedTargetId, selectedMode, selectedMedia, nextPlaylist, lastMediaFolder,
+                resumeOffer, requestedStartPosition, outputState, playback, userMessage, false);
+    }
+
     ApplicationState withUserMessage(String message) {
-        return new ApplicationState(displays, selectedTargetId, selectedMode, selectedMedia, outputState, playback, message, false);
+        return new ApplicationState(displays, selectedTargetId, selectedMode, selectedMedia, playlist, lastMediaFolder,
+                resumeOffer, requestedStartPosition, outputState, playback, message, false);
     }
 
     ApplicationState withOutputState(OutputSessionState state, String message) {
-        return new ApplicationState(displays, selectedTargetId, selectedMode, selectedMedia, state, playback, message, false);
+        return new ApplicationState(displays, selectedTargetId, selectedMode, selectedMedia, playlist, lastMediaFolder,
+                resumeOffer, requestedStartPosition, state, playback, message, false);
     }
 
     ApplicationState withPlayback(PlaybackUiState nextPlayback) {
-        return new ApplicationState(displays, selectedTargetId, selectedMode, selectedMedia, outputState,
+        return new ApplicationState(displays, selectedTargetId, selectedMode, selectedMedia, playlist, lastMediaFolder,
+                resumeOffer, requestedStartPosition, outputState,
                 Objects.requireNonNull(nextPlayback, "nextPlayback"), userMessage, false);
     }
 
     private static String optionalText(String value) {
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private static DisplayMode retainSelectedMode(DisplayInfo target, DisplayMode previousSelection) {
+        if (previousSelection != null) {
+            Optional<DisplayMode> confirmedSelection = target.confirmedModes().stream()
+                    .filter(previousSelection::equals)
+                    .findFirst();
+            if (confirmedSelection.isPresent()) {
+                return confirmedSelection.get();
+            }
+        }
+        return target.currentMode();
     }
 }

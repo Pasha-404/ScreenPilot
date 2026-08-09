@@ -433,6 +433,7 @@ public final class MpvPlayerAdapter implements AutoCloseable {
             case "hwdec-current" -> notifications.submit(new PlayerNotification.HardwareDecoderChanged(data.asText("unknown")));
             case "eof-reached" -> {
                 if (data.asBoolean(false) && state == PlayerState.PLAYING) {
+                    notifications.submit(new PlayerNotification.EndOfFile());
                     transition(PlayerEvent.STOP_MEDIA_REQUESTED);
                 }
             }
@@ -502,7 +503,7 @@ public final class MpvPlayerAdapter implements AutoCloseable {
 
     private MediaInfo readMediaInfo(Path source) throws IOException {
         Map<String, JsonNode> properties = new LinkedHashMap<>();
-        for (String property : List.of("media-title", "file-format", "video-format", "video-params", "container-fps", "track-list")) {
+        for (String property : List.of("media-title", "duration", "file-format", "video-format", "video-params", "container-fps", "track-list")) {
             properties.put(property, property(property));
         }
         return MpvMediaMapper.mediaInfo(source, properties);

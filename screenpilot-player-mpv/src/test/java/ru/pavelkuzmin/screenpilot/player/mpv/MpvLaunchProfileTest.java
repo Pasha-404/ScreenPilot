@@ -43,4 +43,14 @@ class MpvLaunchProfileTest {
         assertThat(defaultPlacement.arguments())
                 .doesNotContain("--screen=1", "--fullscreen", "--fs-screen=1");
     }
+
+    @Test
+    void metadataProbeHasNoWindowOrMediaOutput() {
+        MpvLaunchProfile profile = MpvLaunchProfile.forMetadataProbe(
+                Path.of("vendor/mpv/runtime/mpv.exe"), UUID.randomUUID());
+
+        assertThat(profile.arguments())
+                .contains("--no-config", "--vo=null", "--ao=null", "--pause=yes")
+                .doesNotContain("--force-window=immediate", "--vo=gpu-next", "--gpu-context=d3d11");
+    }
 }

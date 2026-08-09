@@ -8,6 +8,7 @@ import ru.pavelkuzmin.screenpilot.domain.media.MediaTrack;
 import ru.pavelkuzmin.screenpilot.domain.media.MediaTrackKind;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -35,6 +36,7 @@ final class MpvMediaMapper {
         return new MediaInfo(
                 source,
                 text(properties.getOrDefault("media-title", MissingNode.INSTANCE)).orElse(source.getFileName().toString()),
+                duration(properties.getOrDefault("duration", MissingNode.INSTANCE)),
                 text(properties.getOrDefault("file-format", MissingNode.INSTANCE)),
                 text(properties.getOrDefault("video-format", MissingNode.INSTANCE)),
                 text(videoParams, "hw-pixelformat"),
@@ -103,6 +105,12 @@ final class MpvMediaMapper {
             }
         }
         return Optional.of(RefreshRate.of(Math.round(hertz * 1_000), 1_000));
+    }
+
+    private static Optional<Duration> duration(JsonNode value) {
+        return value.isNumber() && value.asDouble() >= 0
+                ? Optional.of(Duration.ofMillis(Math.round(value.asDouble() * 1_000)))
+                : Optional.empty();
     }
 
     private static OptionalInt selectedTrack(List<MediaTrack> tracks, MediaTrackKind kind) {

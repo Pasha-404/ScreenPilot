@@ -42,6 +42,21 @@ class StateMachineTest {
     }
 
     @Test
+    void keepsTheOutputSessionReadyAfterStoppingOnlyTheFile() {
+        OutputSessionState state = OutputSessionState.NO_TARGET;
+        state = OutputSessionStateMachine.transition(state, OutputSessionEvent.TARGET_SELECTED);
+        state = OutputSessionStateMachine.transition(state, OutputSessionEvent.START_REQUESTED);
+        state = OutputSessionStateMachine.transition(state, OutputSessionEvent.DISPLAY_PREPARED);
+        state = OutputSessionStateMachine.transition(state, OutputSessionEvent.FILE_LOADED);
+
+        state = OutputSessionStateMachine.transition(state, OutputSessionEvent.FILE_STOPPED);
+
+        assertThat(state).isEqualTo(OutputSessionState.OUTPUT_IDLE);
+        assertThat(OutputSessionStateMachine.transition(state, OutputSessionEvent.FILE_LOADED))
+                .isEqualTo(OutputSessionState.OUTPUT_ACTIVE);
+    }
+
+    @Test
     void retainsApplicationAfterPlayerFailureAndAllowsShutdown() {
         PlayerState state = PlayerStateMachine.transition(PlayerState.STOPPED, PlayerEvent.START_REQUESTED);
         state = PlayerStateMachine.transition(state, PlayerEvent.STARTED);

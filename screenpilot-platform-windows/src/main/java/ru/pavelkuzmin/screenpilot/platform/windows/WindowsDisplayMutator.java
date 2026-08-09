@@ -39,11 +39,6 @@ public final class WindowsDisplayMutator {
     private static final int SDC_VIRTUAL_MODE_AWARE = 0x0000_8000;
     private static final int CDS_TEST = 0x0000_0002;
     private static final int DISP_CHANGE_SUCCESSFUL = 0;
-    private static final int DM_BITSPERPEL = 0x0004_0000;
-    private static final int DM_PELSWIDTH = 0x0008_0000;
-    private static final int DM_PELSHEIGHT = 0x0010_0000;
-    private static final int DM_DISPLAYFLAGS = 0x0020_0000;
-    private static final int DM_DISPLAYFREQUENCY = 0x0040_0000;
     private static final int DM_INTERLACED = 0x0000_0002;
     private static final int ENUM_CURRENT_SETTINGS = -1;
     private static final int MAX_QUERY_RETRIES = 3;
@@ -119,7 +114,7 @@ public final class WindowsDisplayMutator {
         Objects.requireNonNull(activeTarget, "activeTarget");
         Objects.requireNonNull(requested, "requested");
         requireIndependentActiveTarget(activeTarget, true);
-        WindowsDisplayDiscovery.DevModeW candidate = createRequestedMode(activeTarget.gdiDeviceName(), requested);
+        WindowsDisplayDiscovery.DevModeW candidate = findEnumeratedMode(activeTarget.gdiDeviceName(), requested);
         int testStatus = user32.ChangeDisplaySettingsExW(activeTarget.gdiDeviceName(), candidate, null, CDS_TEST, null);
         if (testStatus != DISP_CHANGE_SUCCESSFUL) {
             throw new IOException("ChangeDisplaySettingsExW(CDS_TEST) rejected the requested mode with code " + testStatus);
@@ -281,25 +276,43 @@ public final class WindowsDisplayMutator {
                 .noneMatch(internal -> internal.gdiDeviceName().equalsIgnoreCase(target.gdiDeviceName()));
     }
 
-    private WindowsDisplayDiscovery.DevModeW createRequestedMode(String gdiDeviceName, DisplayMode requested) throws IOException {
+    /**
+     * Uses the exact DEVMODE returned by EnumDisplaySettingsExW, as required by
+     * ChangeDisplaySettingsExW. Reconstructing a mode from the current DEVMODE can make a driver
+     * choose a different timing with the same visible width and height.
+     */
+    private WindowsDisplayDiscovery.DevModeW findEnumeratedMode(String gdiDeviceName, DisplayMode requested) throws IOException {
         long numerator = requested.refreshRate().numerator();
         long denominator = requested.refreshRate().denominator();
         if (numerator % denominator != 0) {
             throw new IOException("ChangeDisplaySettingsExW accepts only integral DEVMODE refresh values; refusing to round "
                     + requested.refreshRate().hertz() + " Hz");
         }
-        WindowsDisplayDiscovery.DevModeW candidate = readCurrentDevMode(gdiDeviceName);
-        candidate.dmPelsWidth = requested.width();
-        candidate.dmPelsHeight = requested.height();
-        candidate.dmBitsPerPel = requested.bitsPerPixel();
-        candidate.dmDisplayFrequency = Math.toIntExact(numerator / denominator);
-        candidate.dmDisplayFlags = requested.interlaced()
-                ? candidate.dmDisplayFlags | DM_INTERLACED
-                : candidate.dmDisplayFlags & ~DM_INTERLACED;
-        candidate.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL | DM_DISPLAYFREQUENCY | DM_DISPLAYFLAGS;
-        candidate.dmSize = (short) candidate.size();
-        candidate.write();
-        return candidate;
+        for (int index = 0; ; index++) {
+            WindowsDisplayDiscovery.DevModeW candidate = new WindowsDisplayDiscovery.DevModeW();
+            candidate.dmSize = (short) candidate.size();
+            candidate.write();
+            if (!user32.EnumDisplaySettingsExW(gdiDeviceName, index, candidate, 0)) {
+                break;
+            }
+            candidate.read();
+            if (matchesEnumeratedMode(candidate, requested)) {
+                return candidate;
+            }
+        }
+        throw new IOException("EnumDisplaySettingsExW no longer reports the selected display mode");
+    }
+
+    static boolean matchesEnumeratedMode(WindowsDisplayDiscovery.DevModeW candidate, DisplayMode requested) {
+        long numerator = requested.refreshRate().numerator();
+        long denominator = requested.refreshRate().denominator();
+        return denominator != 0
+                && numerator % denominator == 0
+                && candidate.dmPelsWidth == requested.width()
+                && candidate.dmPelsHeight == requested.height()
+                && candidate.dmBitsPerPel == requested.bitsPerPixel()
+                && candidate.dmDisplayFrequency == Math.toIntExact(numerator / denominator)
+                && ((candidate.dmDisplayFlags & DM_INTERLACED) != 0) == requested.interlaced();
     }
 
     private WindowsDisplayDiscovery.DevModeW readCurrentDevMode(String gdiDeviceName) throws IOException {

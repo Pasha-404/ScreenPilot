@@ -66,6 +66,7 @@ public record PlaybackUiState(
                     playerState, mediaInfo, position, duration, volumePercent, scalingMode,
                     changed.devices(), changed.selectedDeviceId().orElse(null), tracks);
             case PlayerNotification.HardwareDecoderChanged ignored -> this;
+            case PlayerNotification.EndOfFile ignored -> this;
             case PlayerNotification.Diagnostic ignored -> this;
             case PlayerNotification.Failure ignored -> this;
         };
@@ -78,6 +79,11 @@ public record PlaybackUiState(
 
     PlaybackUiState withScalingMode(ScalingMode scaling) {
         return new PlaybackUiState(playerState, mediaInfo, position, duration, volumePercent, scaling,
+                audioOutputs, selectedAudioOutputId, tracks);
+    }
+
+    PlaybackUiState withPlayerState(PlayerState nextPlayerState) {
+        return new PlaybackUiState(nextPlayerState, mediaInfo, position, duration, volumePercent, scalingMode,
                 audioOutputs, selectedAudioOutputId, tracks);
     }
 }

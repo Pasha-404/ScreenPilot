@@ -33,6 +33,7 @@ public final class OutputSessionStateMachine {
                 default -> invalid(state, event);
             };
             case OUTPUT_ACTIVE -> switch (event) {
+                case FILE_STOPPED -> OutputSessionState.OUTPUT_IDLE;
                 case STOP_OUTPUT_REQUESTED -> OutputSessionState.RESTORING_DISPLAY;
                 case TARGET_LOST, OUTPUT_FAILED -> OutputSessionState.OUTPUT_ERROR;
                 default -> invalid(state, event);

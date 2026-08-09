@@ -26,7 +26,7 @@
 .content-scroll { -fx-background: transparent; -fx-background-color: transparent; }
 .content-scroll > .viewport { -fx-background-color: transparent; }
 .content-area { -fx-background-color: transparent; }
-.media-card, .player-card, .feedback-card { -fx-padding: 20; -fx-background-color: linear-gradient(to bottom right, #12243a, #0d1c2d); -fx-background-radius: 14; -fx-border-color: #223a56; -fx-border-radius: 14; }
+.media-card, .player-card, .feedback-card, .playlist-card { -fx-padding: 20; -fx-background-color: linear-gradient(to bottom right, #12243a, #0d1c2d); -fx-background-radius: 14; -fx-border-color: #223a56; -fx-border-radius: 14; }
 .section-label, .field-label { -fx-text-fill: #9fb4ca; -fx-font-size: 12px; -fx-font-weight: 700; }
 .media-title { -fx-text-fill: #f8fbff; -fx-font-size: 20px; -fx-font-weight: 600; }
 .time-label { -fx-text-fill: #d9e6f5; -fx-font-size: 13px; }
@@ -38,6 +38,10 @@
 .combo-box-popup .list-view { -fx-background-color: #102237; }
 .combo-box-popup .list-cell { -fx-text-fill: #e9f2fc; -fx-background-color: #102237; }
 .combo-box-popup .list-cell:hover { -fx-background-color: #1a3857; }
+.playlist-list { -fx-background-color: #0d1c2d; -fx-border-color: #294563; -fx-border-radius: 8; -fx-background-radius: 8; }
+.playlist-list .list-cell { -fx-background-color: #0d1c2d; -fx-text-fill: #dce9f8; -fx-padding: 10 12 10 12; }
+.playlist-list .list-cell:filled:selected { -fx-background-color: #174f93; }
+.playlist-list .list-cell:filled:hover { -fx-background-color: #152d47; }
 
 .button { -fx-cursor: hand; -fx-font-weight: 600; -fx-padding: 10 14 10 14; -fx-background-radius: 8; }
 .primary-button { -fx-background-color: linear-gradient(to bottom, #1677ff, #0d57d5); -fx-text-fill: white; }

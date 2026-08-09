@@ -74,7 +74,23 @@ public record MpvLaunchProfile(Path executable, String ipcPipe, String windowTit
         return new MpvLaunchProfile(profile.executable(), profile.ipcPipe(), profile.windowTitle(), arguments);
     }
 
-    /** Real-mpv integration profile with no video or audio output; never use in the application. */
+    /** Headless local-file probe: no window, video output, audio output or frame playback. */
+    static MpvLaunchProfile forMetadataProbe(Path executable, UUID sessionId) {
+        MpvLaunchProfile profile = create(executable, sessionId, "ScreenPilot probe ", false);
+        List<String> arguments = new ArrayList<>(profile.arguments());
+        arguments.remove("--force-window=immediate");
+        arguments.remove("--no-border");
+        arguments.remove("--ontop=yes");
+        arguments.remove("--vo=gpu-next");
+        arguments.remove("--gpu-context=d3d11");
+        arguments.remove("--hwdec=auto-safe");
+        arguments.add("--vo=null");
+        arguments.add("--ao=null");
+        arguments.add("--pause=yes");
+        return new MpvLaunchProfile(profile.executable(), profile.ipcPipe(), profile.windowTitle(), arguments);
+    }
+
+    /** Compatibility name retained for the existing real-mpv integration test. */
     static MpvLaunchProfile forHeadlessTest(Path executable, UUID sessionId) {
         MpvLaunchProfile profile = create(executable, sessionId, "ScreenPilot test ", false);
         List<String> arguments = new ArrayList<>(profile.arguments());

@@ -4,6 +4,7 @@
 <?import javafx.scene.control.Button?>
 <?import javafx.scene.control.ComboBox?>
 <?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ListView?>
 <?import javafx.scene.control.ScrollPane?>
 <?import javafx.scene.control.Separator?>
 <?import javafx.scene.control.Slider?>
@@ -16,7 +17,7 @@
 <?import javafx.scene.layout.RowConstraints?>
 <?import javafx.scene.layout.VBox?>
 
-<BorderPane xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1" fx:controller="ru.pavelkuzmin.screenpilot.app.ui.MainViewController" styleClass="application-root">
+<BorderPane xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1" fx:controller="ru.pavelkuzmin.screenpilot.app.ui.MainViewController" onDragOver="#acceptVideoDrop" onDragDropped="#dropMediaFiles" styleClass="application-root">
     <top>
         <HBox alignment="CENTER_LEFT" spacing="16" styleClass="top-bar">
             <padding><Insets top="18" right="24" bottom="18" left="24" /></padding>
@@ -45,7 +46,7 @@
                         <Label text="Видео всегда остаётся только на выбранном внешнем экране." wrapText="true" styleClass="side-card-text" />
                     </VBox>
                     <Region VBox.vgrow="ALWAYS" />
-                    <Label text="Этап 6 · UI" styleClass="muted-label" />
+                    <Label text="Этап 7 · плейлист и resume" styleClass="muted-label" />
                 </VBox>
             </content>
         </ScrollPane>
@@ -68,9 +69,11 @@
                         </HBox>
                         <Slider fx:id="progressSlider" value="0" onMouseReleased="#seekFromSlider" maxWidth="1.7976931348623157E308" />
                         <HBox alignment="CENTER" spacing="12">
+                            <Button fx:id="previousButton" text="Предыдущее" onAction="#previousPlaylistItem" disable="true" styleClass="secondary-button" />
                             <Button fx:id="seekBackwardButton" text="−10 с" onAction="#seekBackward" disable="true" styleClass="secondary-button" />
                             <Button fx:id="pauseButton" text="Пауза" onAction="#togglePause" disable="true" styleClass="play-button" />
                             <Button fx:id="seekForwardButton" text="+10 с" onAction="#seekForward" disable="true" styleClass="secondary-button" />
+                            <Button fx:id="nextButton" text="Следующее" onAction="#nextPlaylistItem" disable="true" styleClass="secondary-button" />
                             <Button fx:id="stopPlaybackButton" text="Стоп" onAction="#stopPlayback" disable="true" styleClass="secondary-button" />
                         </HBox>
                         <HBox alignment="CENTER_LEFT" spacing="10">
@@ -82,6 +85,22 @@
                     <VBox spacing="8" styleClass="feedback-card">
                         <Label text="Статус" styleClass="section-label" />
                         <Label fx:id="feedback" text="Ищу подключённые внешние экраны…" wrapText="true" styleClass="feedback-text" />
+                    </VBox>
+                    <VBox spacing="10" styleClass="playlist-card">
+                        <HBox alignment="CENTER_LEFT" spacing="10">
+                            <Label text="Плейлист" styleClass="section-title" />
+                            <Region HBox.hgrow="ALWAYS" />
+                            <Label fx:id="playlistSummary" text="Плейлист пуст" styleClass="muted-label" />
+                        </HBox>
+                        <ListView fx:id="playlistView" prefHeight="190" styleClass="playlist-list" />
+                        <HBox spacing="8">
+                            <Button fx:id="addPlaylistButton" text="Добавить файлы" onAction="#openMedia" styleClass="primary-outline-button" />
+                            <Button fx:id="removePlaylistButton" text="Удалить" onAction="#removePlaylistItem" disable="true" styleClass="secondary-button" />
+                            <Region HBox.hgrow="ALWAYS" />
+                            <Button fx:id="movePlaylistUpButton" text="↑" onAction="#movePlaylistUp" disable="true" styleClass="secondary-button" />
+                            <Button fx:id="movePlaylistDownButton" text="↓" onAction="#movePlaylistDown" disable="true" styleClass="secondary-button" />
+                        </HBox>
+                        <Label text="Можно добавить несколько файлов через Ctrl+O или перетащить их в окно. Для смены порядка перетащите строку либо используйте стрелки." wrapText="true" styleClass="muted-label" />
                     </VBox>
                 </VBox>
             </content>
@@ -112,6 +131,11 @@
             <VBox spacing="6">
                 <Label text="Аудиодорожка" styleClass="field-label" />
                 <ComboBox fx:id="audioTrackSelector" disable="true" promptText="Появится после запуска mpv" maxWidth="1.7976931348623157E308" />
+            </VBox>
+            <VBox spacing="6">
+                <Label text="Субтитры" styleClass="field-label" />
+                <ComboBox fx:id="subtitleSelector" disable="true" promptText="Появятся после запуска mpv" maxWidth="1.7976931348623157E308" />
+                <Button fx:id="addSubtitleButton" text="Подключить файл субтитров" onAction="#addSubtitle" disable="true" maxWidth="1.7976931348623157E308" styleClass="secondary-button" />
             </VBox>
             <Region VBox.vgrow="ALWAYS" />
             <Button fx:id="startOutputButton" text="Воспроизвести на внешнем экране" onAction="#startOutput" disable="true" maxWidth="1.7976931348623157E308" styleClass="primary-button" />
