@@ -17,3 +17,4 @@
 - `0004-display-mutation-recovery.md` — временные изменения topology/режима только после snapshot и с recovery journal.
 - `0005-javafx-ui-state-and-output-placement.md` — единое состояние JavaFX и обязательная проверка размещения окна mpv на физическом target.
 - `0006-playlist-resume-and-metadata-probe.md` — in-memory плейлист, resume и отдельный headless mpv для параметров файлов.
+- `0007-release-packaging-and-hardening.md` — single instance, логи и диагностика, устранение stale pause, jpackage и проверка runtime.

@@ -69,6 +69,36 @@ class MpvPlayerAdapterTest {
         }
     }
 
+    @Test
+    void explicitlyUnpausesEachNewFileAfterThePlayerReturnsToIdle() throws Exception {
+        Path media = Files.createTempFile("screenpilot-player-", ".wav");
+        try {
+            FakeIpcSession session = new FakeIpcSession();
+            MpvProcessStarter starter = profile -> new FakeProcess();
+            MpvIpcConnector connector = (pipe, timeout) -> session;
+
+            try (MpvPlayerAdapter adapter = new MpvPlayerAdapter(
+                    Path.of("vendor/mpv/runtime/mpv.exe"), starter, ProcessContainment.disabled(), connector,
+                    MpvLaunchProfile::forPlayer)) {
+                adapter.start().toCompletableFuture().get(2, TimeUnit.SECONDS);
+
+                var firstLoad = adapter.load(media, Duration.ZERO).toCompletableFuture();
+                session.emit("file-loaded", event -> { });
+                firstLoad.get(2, TimeUnit.SECONDS);
+                adapter.stop().toCompletableFuture().get(2, TimeUnit.SECONDS);
+
+                var secondLoad = adapter.load(media, Duration.ZERO).toCompletableFuture();
+                session.emit("file-loaded", event -> { });
+                secondLoad.get(2, TimeUnit.SECONDS);
+
+                assertThat(adapter.state()).isEqualTo(PlayerState.PLAYING);
+                assertThat(session.pauseValues()).containsExactly(false, false);
+            }
+        } finally {
+            Files.deleteIfExists(media);
+        }
+    }
+
     private static void await(Condition condition) throws Exception {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
         while (!condition.matches() && System.nanoTime() < deadline) {
@@ -86,9 +116,13 @@ class MpvPlayerAdapterTest {
 
         private final List<Consumer<JsonNode>> eventListeners = new ArrayList<>();
         private final List<Consumer<IOException>> disconnectListeners = new ArrayList<>();
+        private final List<Boolean> pauseValues = new ArrayList<>();
 
         @Override
         public JsonNode command(List<?> command, Duration timeout) {
+            if ("set_property".equals(command.getFirst()) && "pause".equals(command.get(1))) {
+                pauseValues.add((Boolean) command.get(2));
+            }
             ObjectNode response = JsonNodeFactory.instance.objectNode().put("error", "success");
             if ("get_property".equals(command.getFirst())) {
                 response.set("data", property((String) command.get(1)));
@@ -123,6 +157,10 @@ class MpvPlayerAdapterTest {
 
         void emitLog(String level, String text) {
             emit("log-message", event -> event.put("level", level).put("text", text));
+        }
+
+        List<Boolean> pauseValues() {
+            return List.copyOf(pauseValues);
         }
 
         private static JsonNode property(String name) {

@@ -20,6 +20,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -110,6 +111,87 @@ class ScreenPilotApplicationServiceTest {
             assertThat(store.current().readyForOutput()).isFalse();
             assertThat(probed.get()).isEqualTo(video.toAbsolutePath().normalize());
         }
+    }
+
+    @Test
+    void startingFromTheBeginningClearsThePersistedResumeEntry() throws Exception {
+        Path video = temporaryDirectory.resolve("movie.mkv");
+        Files.write(video, new byte[]{1, 2, 3});
+        CopyOnWriteArrayList<MediaFingerprint> completed = new CopyOnWriteArrayList<>();
+        UiStateStore store = new UiStateStore();
+        ExecutorService serial = Executors.newSingleThreadExecutor();
+        MediaProbe probe = inertProbe();
+        ResumeRepository resume = resumableRepository(completed);
+        try (ScreenPilotApplicationService service = new ScreenPilotApplicationService(
+                java.util.List::of,
+                store,
+                serial,
+                new WindowsDisplayMutator(),
+                new EmptyRecoveryJournal(),
+                new WindowsMpvWindowLocator(),
+                inertSettings(),
+                resume,
+                probe
+        )) {
+            service.addMediaFiles(java.util.List.of(video));
+            await(() -> store.current().resumeOffer() != null);
+
+            service.resolveResume(false);
+            await(() -> store.current().resumeOffer() == null);
+
+            assertThat(completed).containsExactly(store.current().selectedPlaylistItem().orElseThrow().fingerprint());
+            assertThat(store.current().requestedStartPosition()).isZero();
+        }
+    }
+
+    private static MediaProbe inertProbe() {
+        return new MediaProbe() {
+            @Override
+            public java.util.concurrent.CompletionStage<MediaInfo> probe(Path file) {
+                return new CompletableFuture<>();
+            }
+
+            @Override
+            public void cancelAll() {
+            }
+
+            @Override
+            public void close() {
+            }
+        };
+    }
+
+    private static SettingsRepository inertSettings() {
+        return new SettingsRepository() {
+            @Override
+            public AppSettings load() {
+                return AppSettings.defaults();
+            }
+
+            @Override
+            public void save(AppSettings value) {
+            }
+        };
+    }
+
+    private static ResumeRepository resumableRepository(CopyOnWriteArrayList<MediaFingerprint> completed) {
+        return new ResumeRepository() {
+            @Override
+            public Optional<ResumeEntry> find(MediaFingerprint fingerprint) {
+                return completed.contains(fingerprint)
+                        ? Optional.empty()
+                        : Optional.of(new ResumeEntry(fingerprint, Duration.ofMinutes(3), Duration.ofMinutes(20), Instant.now()));
+            }
+
+            @Override
+            public void save(ResumeEntry entry) {
+            }
+
+            @Override
+            public void markCompleted(MediaFingerprint fingerprint) {
+                completed.add(fingerprint);
+            }
+        };
     }
 
     private static void await(Check check) throws Exception {

@@ -9,6 +9,7 @@ public final class BootstrapMain {
     }
 
     public static void main(String[] args) {
+        ApplicationPaths.configureLogging();
         if (args.length == 0) {
             ru.pavelkuzmin.screenpilot.app.ui.ScreenPilotApplication.launchApplication(args);
             return;

@@ -398,6 +398,10 @@ public final class MpvPlayerAdapter implements AutoCloseable {
                 command("restore paused state", List.of("set_property", "pause", true), COMMAND_TIMEOUT);
                 transition(PlayerEvent.PAUSE_REQUESTED);
                 pauseAfterLoad = false;
+            } else {
+                // --keep-open=yes can leave mpv paused after EOF. Do not rely on its implicit
+                // default here: each normal load must explicitly enter playback.
+                command("start loaded file", List.of("set_property", "pause", false), COMMAND_TIMEOUT);
             }
             notifications.submit(new PlayerNotification.MediaLoaded(media));
             completePendingLoad(media);

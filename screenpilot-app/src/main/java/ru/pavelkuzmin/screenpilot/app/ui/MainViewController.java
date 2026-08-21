@@ -14,6 +14,7 @@ import javafx.scene.control.Slider;
 import javafx.scene.control.TextInputControl;
 import javafx.scene.control.Tooltip;
 import javafx.scene.input.ClipboardContent;
+import javafx.scene.input.Clipboard;
 import javafx.scene.input.DragEvent;
 import javafx.scene.input.Dragboard;
 import javafx.scene.input.KeyCode;
@@ -258,6 +259,15 @@ public final class MainViewController {
     @FXML
     private void refreshDisplays() {
         service.refreshDisplays();
+    }
+
+    @FXML
+    private void copyDiagnostics() {
+        service.copyDiagnostics(report -> Platform.runLater(() -> {
+            ClipboardContent content = new ClipboardContent();
+            content.putString(report);
+            Clipboard.getSystemClipboard().setContent(content);
+        }));
     }
 
     @FXML

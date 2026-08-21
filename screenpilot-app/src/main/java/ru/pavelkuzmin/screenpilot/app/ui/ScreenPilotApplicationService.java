@@ -1,5 +1,8 @@
 package ru.pavelkuzmin.screenpilot.app.ui;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import ru.pavelkuzmin.screenpilot.app.ApplicationPaths;
 import ru.pavelkuzmin.screenpilot.domain.display.DisplayInfo;
 import ru.pavelkuzmin.screenpilot.domain.display.DisplayMode;
 import ru.pavelkuzmin.screenpilot.domain.port.ProcessContainment;
@@ -37,9 +40,13 @@ import ru.pavelkuzmin.screenpilot.player.mpv.MpvPlayerAdapter;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.io.BufferedReader;
+import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -48,6 +55,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Flow;
 import java.util.concurrent.ThreadFactory;
+import java.util.function.Consumer;
 import java.util.function.UnaryOperator;
 
 /**
@@ -55,6 +63,8 @@ import java.util.function.UnaryOperator;
  * JavaFX Application Thread. It is also the sole owner of the output-session state machine.
  */
 public final class ScreenPilotApplicationService implements AutoCloseable {
+
+    private static final Logger LOG = LoggerFactory.getLogger(ScreenPilotApplicationService.class);
 
     private final DisplayDiscovery displayDiscovery;
     private final UiStateStore store;
@@ -68,6 +78,9 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
     private ActiveOutput activeOutput;
     private AppSettings settings = AppSettings.defaults();
     private Instant lastResumeSavedAt = Instant.MIN;
+    /** Choices made during this process prevent the same persisted entry from being offered twice. */
+    private final Map<MediaFingerprint, ResumeEntry> resumeDecisions = new HashMap<>();
+    private PendingStart pendingStartAfterResumeChoice;
     private boolean endOfFilePending;
     private boolean suppressNextIdleTransition;
 
@@ -123,6 +136,9 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
 
     public void start() {
         serial.execute(() -> {
+            LOG.info("ScreenPilot {} started on {} {}; Java {}",
+                    System.getProperty("screenpilot.version", "dev"), System.getProperty("os.name"),
+                    System.getProperty("os.version"), System.getProperty("java.runtime.version"));
             loadSettingsOnSerial();
             refreshDisplays();
         });
@@ -140,6 +156,7 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
             try {
                 store.publish(store.current().withDisplays(displayDiscovery.discover()));
             } catch (IOException exception) {
+                LOG.warn("Display discovery failed", exception);
                 store.publish(store.current().withUserMessage(
                         "Не удалось прочитать конфигурацию экранов. Попробуйте обновить список."));
             }
@@ -204,6 +221,7 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
     public void selectPlaylistItem(int index) {
         serial.execute(() -> {
             try {
+                pendingStartAfterResumeChoice = null;
                 Playlist playlist = store.current().playlist().select(index);
                 PlaylistItem item = playlist.selectedItem().orElseThrow();
                 store.publish(store.current().withPlaylist(playlist, resumeOffer(item), "Выбран файл из плейлиста."));
@@ -247,7 +265,32 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
     }
 
     public void resolveResume(boolean resume) {
-        serial.execute(() -> store.publish(store.current().withResumeDecision(resume)));
+        serial.execute(() -> {
+            ApplicationState state = store.current();
+            ResumeEntry offer = state.resumeOffer();
+            PlaylistItem item = state.selectedPlaylistItem().orElse(null);
+            if (offer == null || item == null) {
+                return;
+            }
+            if (resume) {
+                resumeDecisions.put(item.fingerprint(), offer);
+            } else {
+                resumeRepository.markCompleted(item.fingerprint());
+                resumeDecisions.remove(item.fingerprint());
+            }
+            store.publish(state.withResumeDecision(resume));
+
+            PendingStart pendingStart = pendingStartAfterResumeChoice;
+            pendingStartAfterResumeChoice = null;
+            if (pendingStart == null) {
+                return;
+            }
+            if (pendingStart.mpvScreenCandidate() == null) {
+                startPlaybackOnSerial(true);
+            } else {
+                startOutputOnSerial(pendingStart.mpvScreenCandidate(), true);
+            }
+        });
     }
 
     public void startOutput(int mpvScreenCandidate) {
@@ -271,6 +314,16 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
         serial.execute(() -> {
             stopOutputOnSerial("ScreenPilot завершает работу.");
             completed.run();
+        });
+    }
+
+    /** Builds a support report off the JavaFX thread, then hands the text to the UI clipboard action. */
+    public void copyDiagnostics(Consumer<String> completed) {
+        Objects.requireNonNull(completed, "completed");
+        serial.execute(() -> {
+            String report = DiagnosticReport.render(store.current(), recentLogLines());
+            store.publish(store.current().withUserMessage("Диагностика скопирована в буфер обмена."));
+            completed.accept(report);
         });
     }
 
@@ -381,9 +434,16 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
     }
 
     private void startOutputOnSerial(int mpvScreenCandidate) {
+        startOutputOnSerial(mpvScreenCandidate, false);
+    }
+
+    private void startOutputOnSerial(int mpvScreenCandidate, boolean resumeDecisionAlreadyMade) {
         ApplicationState state = store.current();
         if (!state.readyForOutput()) {
             store.publish(state.withUserMessage("Сначала выберите доступный внешний экран и видеофайл."));
+            return;
+        }
+        if (!resumeDecisionAlreadyMade && requireResumeDecision(state, new PendingStart(mpvScreenCandidate))) {
             return;
         }
         if (activeOutput != null || state.outputState() == OutputSessionState.PREPARING_DISPLAY
@@ -423,6 +483,7 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
             }
 
             player = new MpvPlayerAdapter(findMpvExecutable(), processContainment(), mpvScreenCandidate);
+            LOG.info("Starting external output on target {} with mode {}", requestedTarget.friendlyName(), selectedModeLabel(state.selectedMode()));
             player.start().toCompletableFuture().get(START_TIMEOUT.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
             String title = player.windowTitle().orElseThrow(() -> new IOException("mpv did not expose its window title"));
             if (!windowLocator.waitForWindowCenteredOn(title, activeTarget.bounds(), WINDOW_TIMEOUT)) {
@@ -439,6 +500,7 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
                     .get(LOAD_TIMEOUT.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
             transition(OutputSessionEvent.FILE_LOADED, "Видео воспроизводится на выбранном внешнем экране.");
         } catch (Exception exception) {
+            LOG.warn("External output start failed", exception);
             ActiveOutput unfinished = activeOutput;
             if (unfinished != null && unfinished.player() == player) {
                 activeOutput = null;
@@ -454,10 +516,17 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
     }
 
     private void startPlaybackOnSerial() {
+        startPlaybackOnSerial(false);
+    }
+
+    private void startPlaybackOnSerial(boolean resumeDecisionAlreadyMade) {
         ApplicationState state = store.current();
         ActiveOutput output = activeOutput;
         if (output == null || state.outputState() != OutputSessionState.OUTPUT_IDLE) {
             store.publish(state.withUserMessage("Сначала подготовьте вывод на внешний экран."));
+            return;
+        }
+        if (!resumeDecisionAlreadyMade && requireResumeDecision(state, new PendingStart(null))) {
             return;
         }
         Path media = state.selectedMedia();
@@ -467,11 +536,13 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
         }
         try {
             store.publish(state.withUserMessage("Открываю видео на подготовленном внешнем экране…"));
+            LOG.info("Opening media file {}", media.getFileName());
             mediaProbe.cancelAll();
             output.player().load(media, state.requestedStartPosition()).toCompletableFuture()
                     .get(LOAD_TIMEOUT.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
             transition(OutputSessionEvent.FILE_LOADED, "Видео воспроизводится на выбранном внешнем экране.");
         } catch (Exception exception) {
+            LOG.warn("Loading media into prepared output failed", exception);
             store.publish(store.current().withUserMessage(
                     "Не удалось открыть выбранный видеофайл. Внешний экран остаётся подготовленным. "
                             + conciseMessage(exception)));
@@ -516,6 +587,7 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
             return;
         }
         activeOutput = null;
+        LOG.info("Stopping external output and restoring the display snapshot");
         transition(OutputSessionEvent.STOP_OUTPUT_REQUESTED, "Восстанавливаю исходную конфигурацию экранов…");
         persistResume(true);
         closeQuietly(output.notifications());
@@ -528,6 +600,7 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
             transition(OutputSessionEvent.RESTORE_SUCCEEDED, successMessage);
             store.publish(store.current().withDisplays(displays).withUserMessage(successMessage));
         } catch (Exception exception) {
+            LOG.error("Display restoration failed", exception);
             transition(OutputSessionEvent.RESTORE_FAILED,
                     "Не удалось полностью восстановить экраны. Откройте восстановление при следующем запуске.");
         }
@@ -583,6 +656,7 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
 
     private PlaylistMutation addPlaylistItem(PlaylistItem item) throws IOException {
         ApplicationState state = store.current();
+        pendingStartAfterResumeChoice = null;
         PlaylistMutation mutation = state.playlist().addOrSelect(item);
         ResumeEntry offer = resumeOffer(mutation.playlist().selectedItem().orElseThrow());
         store.publish(state.withPlaylist(mutation.playlist(), offer,
@@ -608,9 +682,25 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
     }
 
     private ResumeEntry resumeOffer(PlaylistItem item) {
-        return resumeRepository.find(item.fingerprint())
+        ResumeEntry candidate = resumeRepository.find(item.fingerprint())
                 .filter(ResumePolicy::shouldOfferResume)
                 .orElse(null);
+        return candidate != null && !candidate.equals(resumeDecisions.get(item.fingerprint())) ? candidate : null;
+    }
+
+    private boolean requireResumeDecision(ApplicationState state, PendingStart pendingStart) {
+        PlaylistItem item = state.selectedPlaylistItem().orElse(null);
+        if (item == null) {
+            return false;
+        }
+        ResumeEntry offer = resumeOffer(item);
+        if (offer == null) {
+            return false;
+        }
+        pendingStartAfterResumeChoice = pendingStart;
+        store.publish(state.withPlaylist(state.playlist(), offer,
+                "Для выбранного видео сохранена позиция. Выберите, продолжить просмотр или начать с начала."));
+        return true;
     }
 
     private static MediaFingerprint fingerprint(Path candidate) throws IOException {
@@ -744,8 +834,10 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
             updateSelectedPlaylistMetadata(loaded.media());
         }
         if (notification instanceof PlayerNotification.Diagnostic diagnostic) {
+            LOG.warn("Player diagnostic {}: {}", diagnostic.code(), diagnostic.message());
             store.publish(store.current().withUserMessage(diagnostic.message()));
         } else if (notification instanceof PlayerNotification.Failure failure) {
+            LOG.error("Player failure {}: {}", failure.code(), failure.message());
             failActiveOutputOnSerial(OutputSessionEvent.OUTPUT_FAILED,
                     "Видеоплеер остановлен из-за ошибки: " + failure.message());
         }
@@ -811,8 +903,15 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
     }
 
     private void loadSelectedIntoPreparedOutput() {
+        loadSelectedIntoPreparedOutput(false);
+    }
+
+    private void loadSelectedIntoPreparedOutput(boolean resumeDecisionAlreadyMade) {
         ApplicationState state = store.current();
         if (activeOutput == null || state.outputState() != OutputSessionState.OUTPUT_IDLE || state.selectedMedia() == null) {
+            return;
+        }
+        if (!resumeDecisionAlreadyMade && requireResumeDecision(state, new PendingStart(null))) {
             return;
         }
         try {
@@ -828,6 +927,7 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
     private void transition(OutputSessionEvent event, String message) {
         ApplicationState current = store.current();
         OutputSessionState next = OutputSessionStateMachine.transition(current.outputState(), event);
+        LOG.info("Output transition {} -> {} ({})", current.outputState(), next, event);
         store.publish(current.withOutputState(next, message));
     }
 
@@ -881,20 +981,35 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
     }
 
     private static Path findMpvExecutable() {
-        for (Path current = Path.of("").toAbsolutePath().normalize(); current != null; current = current.getParent()) {
-            Path candidate = current.resolve(Path.of("vendor", "mpv", "runtime", "mpv.exe"));
-            if (Files.isRegularFile(candidate)) {
-                return candidate;
-            }
-        }
-        return Path.of("vendor", "mpv", "runtime", "mpv.exe").toAbsolutePath().normalize();
+        return ApplicationPaths.findMpvExecutable(ScreenPilotApplicationService.class);
     }
 
     private static Path applicationDataDirectory() {
-        String localAppData = System.getenv("LOCALAPPDATA");
-        return localAppData == null || localAppData.isBlank()
-                ? Path.of(System.getProperty("user.home"), "AppData", "Local", "ScreenPilot")
-                : Path.of(localAppData).resolve("ScreenPilot");
+        return ApplicationPaths.applicationDataDirectory();
+    }
+
+    private static String selectedModeLabel(DisplayMode mode) {
+        return mode == null ? "current" : mode.width() + "x" + mode.height() + "@" + mode.refreshRate().hertz();
+    }
+
+    private static List<String> recentLogLines() {
+        Path logFile = ApplicationPaths.logDirectory().resolve("screenpilot.log");
+        if (!Files.isRegularFile(logFile)) {
+            return List.of();
+        }
+        try (BufferedReader reader = Files.newBufferedReader(logFile)) {
+            java.util.ArrayDeque<String> tail = new java.util.ArrayDeque<>(100);
+            for (String line; (line = reader.readLine()) != null; ) {
+                if (tail.size() == 100) {
+                    tail.removeFirst();
+                }
+                tail.addLast(line);
+            }
+            return List.copyOf(tail);
+        } catch (IOException exception) {
+            LOG.warn("Could not read diagnostic log tail", exception);
+            return List.of();
+        }
     }
 
     private record ActiveOutput(
@@ -905,6 +1020,15 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
             DisplayInfo target,
             PlayerNotifications notifications
     ) {
+    }
+
+    /** {@code null} screen means loading media into an already prepared black output window. */
+    private record PendingStart(Integer mpvScreenCandidate) {
+        private PendingStart {
+            if (mpvScreenCandidate != null && mpvScreenCandidate < 0) {
+                throw new IllegalArgumentException("mpv screen candidate must be non-negative");
+            }
+        }
     }
 
     private final class PlayerNotifications implements Flow.Subscriber<PlayerNotification>, AutoCloseable {

@@ -1,12 +1,16 @@
 package ru.pavelkuzmin.screenpilot.app.ui;
 
 import javafx.application.Application;
+import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Scene;
+import javafx.scene.control.Alert;
 import javafx.scene.image.Image;
 import javafx.scene.layout.Pane;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
+import ru.pavelkuzmin.screenpilot.app.ApplicationPaths;
+import ru.pavelkuzmin.screenpilot.app.SingleInstanceGuard;
 
 import java.io.IOException;
 import java.net.URL;
@@ -26,6 +30,8 @@ public final class ScreenPilotApplication extends Application {
 
     private ScreenPilotApplicationService service;
     private MainViewController controller;
+    private SingleInstanceGuard instanceGuard;
+    private String startupFailure;
     private boolean closing;
 
     public static void launchApplication(String[] args) {
@@ -33,7 +39,29 @@ public final class ScreenPilotApplication extends Application {
     }
 
     @Override
+    public void init() {
+        ApplicationPaths.configureLogging();
+        try {
+            instanceGuard = SingleInstanceGuard.acquire(ApplicationPaths.applicationDataDirectory());
+        } catch (IOException exception) {
+            startupFailure = "Не удалось проверить, запущен ли другой экземпляр приложения.";
+        }
+    }
+
+    @Override
     public void start(Stage primaryStage) throws IOException {
+        if (startupFailure != null || instanceGuard == null || !instanceGuard.isOwner()) {
+            Alert alert = new Alert(Alert.AlertType.ERROR);
+            alert.initOwner(primaryStage);
+            alert.setTitle("ScreenPilot");
+            alert.setHeaderText(startupFailure == null ? "ScreenPilot уже запущен." : startupFailure);
+            alert.setContentText(startupFailure == null
+                    ? "Закройте работающее окно ScreenPilot и повторите запуск."
+                    : "Закройте ScreenPilot, проверьте доступ к %LOCALAPPDATA% и повторите запуск.");
+            alert.showAndWait();
+            Platform.exit();
+            return;
+        }
         UiStateStore store = new UiStateStore();
         service = new ScreenPilotApplicationService(store);
         controller = new MainViewController(store, service);
@@ -82,6 +110,13 @@ public final class ScreenPilotApplication extends Application {
         }
         if (service != null) {
             service.close();
+        }
+        if (instanceGuard != null) {
+            try {
+                instanceGuard.close();
+            } catch (IOException ignored) {
+                // The OS releases the lock at process exit even if the close itself failed.
+            }
         }
     }
 

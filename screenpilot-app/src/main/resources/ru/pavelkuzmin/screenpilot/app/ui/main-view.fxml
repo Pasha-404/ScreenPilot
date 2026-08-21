@@ -68,7 +68,11 @@
                         <Label text="Space — пауза · ←/→ — ±10 с · Ctrl+←/→ — ±60 с · ↑/↓ — громкость · Esc — остановить вывод" wrapText="true" styleClass="muted-label" />
                     </VBox>
                     <VBox spacing="8" styleClass="feedback-card">
-                        <Label text="Статус" styleClass="section-label" />
+                        <HBox alignment="CENTER_LEFT" spacing="10">
+                            <Label text="Статус" styleClass="section-label" />
+                            <Region HBox.hgrow="ALWAYS" />
+                            <Button text="Копировать диагностику" onAction="#copyDiagnostics" styleClass="link-button" />
+                        </HBox>
                         <Label fx:id="feedback" text="Ищу подключённые внешние экраны…" wrapText="true" styleClass="feedback-text" />
                     </VBox>
                     <VBox spacing="10" styleClass="playlist-card">
