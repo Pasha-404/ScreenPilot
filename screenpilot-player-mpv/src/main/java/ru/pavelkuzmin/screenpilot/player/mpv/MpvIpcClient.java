@@ -32,6 +32,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 
 /**
@@ -43,6 +44,11 @@ public final class MpvIpcClient implements MpvIpcSession {
     private static final Logger LOG = LoggerFactory.getLogger(MpvIpcClient.class);
     private static final Duration RETRY_INTERVAL = Duration.ofMillis(50);
     private static final Duration DEFAULT_COMMAND_TIMEOUT = Duration.ofSeconds(3);
+    private static final Duration CLOSE_TRANSFER_TIMEOUT = Duration.ofSeconds(3);
+    private static final long NO_DEADLINE = Long.MAX_VALUE;
+    private static final int WAIT_TIMEOUT = 0x0000_0102;
+    private static final int INFINITE = 0xFFFF_FFFF;
+    private static final int ERROR_NOT_FOUND = 1_168;
 
     private final HANDLE pipe;
     private final AtomicLong requestIds = new AtomicLong();
@@ -51,8 +57,11 @@ public final class MpvIpcClient implements MpvIpcSession {
     private final CopyOnWriteArrayList<Consumer<IOException>> disconnectListeners = new CopyOnWriteArrayList<>();
     private final ScheduledExecutorService timeouts;
     private final AtomicBoolean closed = new AtomicBoolean();
-    private final Object writeLock = new Object();
+    private final ReentrantLock writeLock = new ReentrantLock();
+    private final Object transferMonitor = new Object();
     private final Thread readerThread;
+    private int activeTransfers;
+    private boolean pipeHandleClosed;
 
     private MpvIpcClient(HANDLE pipe) {
         this.pipe = pipe;
@@ -103,6 +112,7 @@ public final class MpvIpcClient implements MpvIpcSession {
         if (closed.get()) {
             throw new IOException("mpv IPC client is closed");
         }
+        long deadlineNanos = deadlineAfter(timeout);
         long requestId = requestIds.incrementAndGet();
         CompletableFuture<JsonNode> reply = new CompletableFuture<>();
         pending.put(requestId, reply);
@@ -114,11 +124,16 @@ public final class MpvIpcClient implements MpvIpcSession {
 
         try {
             String payload = MpvJsonProtocol.encodeCommand(requestId, command) + "\n";
-            synchronized (writeLock) {
+            if (!tryAcquireWriteLock(deadlineNanos)) {
+                throw new IOException("Timed out waiting to write an mpv command");
+            }
+            try {
                 if (closed.get()) {
                     throw new IOException("mpv IPC client is closed");
                 }
-                write(payload.getBytes(StandardCharsets.UTF_8));
+                write(payload.getBytes(StandardCharsets.UTF_8), deadlineNanos);
+            } finally {
+                writeLock.unlock();
             }
         } catch (Exception exception) {
             pending.remove(requestId, reply);
@@ -126,7 +141,7 @@ public final class MpvIpcClient implements MpvIpcSession {
         }
 
         try {
-            return reply.get(timeout.plusMillis(250).toMillis(), TimeUnit.MILLISECONDS);
+            return reply.get(remainingMillis(deadlineNanos), TimeUnit.MILLISECONDS);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw new IOException("Interrupted while waiting for mpv command response", exception);
@@ -219,8 +234,8 @@ public final class MpvIpcClient implements MpvIpcSession {
         }
     }
 
-    private void write(byte[] bytes) throws IOException {
-        int written = transfer("WriteFile", bytes, false);
+    private void write(byte[] bytes, long deadlineNanos) throws IOException {
+        int written = transfer("WriteFile", bytes, false, deadlineNanos);
         if (written != bytes.length) {
             throw new IOException("WriteFile wrote " + written + " of " + bytes.length + " bytes to mpv IPC pipe");
         }
@@ -228,7 +243,7 @@ public final class MpvIpcClient implements MpvIpcSession {
 
     private int readByte() throws IOException {
         byte[] buffer = new byte[1];
-        return transfer("ReadFile", buffer, true) == 0 ? -1 : Byte.toUnsignedInt(buffer[0]);
+        return transfer("ReadFile", buffer, true, NO_DEADLINE) == 0 ? -1 : Byte.toUnsignedInt(buffer[0]);
     }
 
     /**
@@ -236,9 +251,11 @@ public final class MpvIpcClient implements MpvIpcSession {
      * another thread waits for events. Synchronous ReadFile blocks a concurrent WriteFile on this
      * pipe implementation, so every operation owns a separate OVERLAPPED structure and event.
      */
-    private int transfer(String operation, byte[] buffer, boolean read) throws IOException {
+    private int transfer(String operation, byte[] buffer, boolean read, long deadlineNanos) throws IOException {
+        beginTransfer();
         HANDLE event = Kernel32.INSTANCE.CreateEvent(null, true, false, null);
         if (isInvalid(event)) {
+            endTransfer();
             throw nativeFailure("CreateEvent for " + operation);
         }
         WinBase.OVERLAPPED overlapped = new WinBase.OVERLAPPED();
@@ -256,8 +273,8 @@ public final class MpvIpcClient implements MpvIpcSession {
             if (!completed && Kernel32.INSTANCE.GetLastError() != WinError.ERROR_IO_PENDING) {
                 throw nativeFailure(operation);
             }
-            if (!completed && !OverlappedKernel32.INSTANCE.GetOverlappedResult(pipe, overlapped, transferred, true)) {
-                throw nativeFailure("GetOverlappedResult after " + operation);
+            if (!completed) {
+                waitForOverlappedCompletion(operation, overlapped, transferred, deadlineNanos);
             }
             int bytesTransferred = transferred.getValue();
             if (read && bytesTransferred > 0) {
@@ -266,7 +283,120 @@ public final class MpvIpcClient implements MpvIpcSession {
             return bytesTransferred;
         } finally {
             Kernel32.INSTANCE.CloseHandle(event);
+            endTransfer();
         }
+    }
+
+    private void waitForOverlappedCompletion(
+            String operation,
+            WinBase.OVERLAPPED overlapped,
+            IntByReference transferred,
+            long deadlineNanos
+    ) throws IOException {
+        if (!OverlappedKernel32.INSTANCE.GetOverlappedResultEx(
+                pipe, overlapped, transferred, waitTimeoutMillis(deadlineNanos), false)) {
+            int error = Kernel32.INSTANCE.GetLastError();
+            if (error == WAIT_TIMEOUT || error == WinError.ERROR_IO_INCOMPLETE) {
+                cancelAndAwaitCompletion(operation, overlapped, transferred);
+                throw new IOException(operation + " timed out before its overlapped I/O completed");
+            }
+            throw new IOException("GetOverlappedResultEx after " + operation
+                    + " failed with Win32 error " + error);
+        }
+    }
+
+    /**
+     * CancelIoEx only requests cancellation. The native buffer, OVERLAPPED and event remain owned
+     * by this method until GetOverlappedResult observes the final completion state.
+     */
+    private void cancelAndAwaitCompletion(String operation, WinBase.OVERLAPPED overlapped,
+                                          IntByReference transferred) throws IOException {
+        boolean cancelRequested = OverlappedKernel32.INSTANCE.CancelIoEx(pipe, overlapped);
+        int cancelError = cancelRequested ? 0 : Kernel32.INSTANCE.GetLastError();
+        if (!cancelRequested && cancelError != ERROR_NOT_FOUND) {
+            throw nativeFailure("CancelIoEx after " + operation);
+        }
+        if (!OverlappedKernel32.INSTANCE.GetOverlappedResult(pipe, overlapped, transferred, true)) {
+            int completionError = Kernel32.INSTANCE.GetLastError();
+            if (completionError != WinError.ERROR_OPERATION_ABORTED) {
+                throw new IOException("GetOverlappedResult after cancelling " + operation
+                        + " failed with Win32 error " + completionError);
+            }
+        }
+    }
+
+    private boolean tryAcquireWriteLock(long deadlineNanos) throws IOException {
+        try {
+            return writeLock.tryLock(remainingNanos(deadlineNanos), TimeUnit.NANOSECONDS);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted while waiting to write an mpv command", exception);
+        }
+    }
+
+    private void beginTransfer() throws IOException {
+        synchronized (transferMonitor) {
+            if (closed.get() || pipeHandleClosed) {
+                throw new IOException("mpv IPC client is closed");
+            }
+            activeTransfers++;
+        }
+    }
+
+    private void endTransfer() {
+        synchronized (transferMonitor) {
+            activeTransfers--;
+            transferMonitor.notifyAll();
+        }
+    }
+
+    private boolean awaitActiveTransfers() {
+        long deadlineNanos = deadlineAfter(CLOSE_TRANSFER_TIMEOUT);
+        synchronized (transferMonitor) {
+            while (activeTransfers > 0) {
+                long remaining = remainingNanos(deadlineNanos);
+                if (remaining <= 0) {
+                    return false;
+                }
+                try {
+                    TimeUnit.NANOSECONDS.timedWait(transferMonitor, remaining);
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    private static long deadlineAfter(Duration timeout) {
+        long durationNanos = timeout.toNanos();
+        long now = System.nanoTime();
+        return durationNanos >= Long.MAX_VALUE - now ? Long.MAX_VALUE : now + durationNanos;
+    }
+
+    private static long remainingNanos(long deadlineNanos) {
+        return deadlineNanos == NO_DEADLINE ? Long.MAX_VALUE : Math.max(0, deadlineNanos - System.nanoTime());
+    }
+
+    private static long remainingMillis(long deadlineNanos) throws IOException {
+        long remaining = remainingNanos(deadlineNanos);
+        if (remaining <= 0) {
+            throw new IOException("mpv command timed out before receiving a response");
+        }
+        return Math.max(1, TimeUnit.NANOSECONDS.toMillis(remaining));
+    }
+
+    private static int waitTimeoutMillis(long deadlineNanos) {
+        if (deadlineNanos == NO_DEADLINE) {
+            return INFINITE;
+        }
+        long remaining = remainingNanos(deadlineNanos);
+        if (remaining <= 0) {
+            return 0;
+        }
+        long millis = Math.max(1, TimeUnit.NANOSECONDS.toMillis(remaining));
+        return millis >= Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) millis;
     }
 
     private static boolean isInvalid(HANDLE handle) {
@@ -302,9 +432,17 @@ public final class MpvIpcClient implements MpvIpcSession {
         if (closed.compareAndSet(false, true)) {
             timeouts.shutdownNow();
             OverlappedKernel32.INSTANCE.CancelIoEx(pipe, null);
-            Kernel32.INSTANCE.CloseHandle(pipe);
             readerThread.interrupt();
             notifyDisconnected(new IOException("mpv IPC client was closed"));
+            if (!awaitActiveTransfers()) {
+                throw new IOException("Timed out waiting for mpv IPC overlapped I/O to finish; pipe handle was retained safely");
+            }
+            synchronized (transferMonitor) {
+                if (!pipeHandleClosed) {
+                    Kernel32.INSTANCE.CloseHandle(pipe);
+                    pipeHandleClosed = true;
+                }
+            }
         }
     }
 
@@ -319,6 +457,9 @@ public final class MpvIpcClient implements MpvIpcSession {
 
         boolean GetOverlappedResult(HANDLE file, WinBase.OVERLAPPED overlapped,
                                     IntByReference bytesTransferred, boolean wait);
+
+        boolean GetOverlappedResultEx(HANDLE file, WinBase.OVERLAPPED overlapped,
+                                      IntByReference bytesTransferred, int milliseconds, boolean alertable);
 
         boolean CancelIoEx(HANDLE file, WinBase.OVERLAPPED overlapped);
     }

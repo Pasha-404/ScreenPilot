@@ -15,11 +15,11 @@ ScreenPilot — личное Windows-приложение для воспрои�
 - сохраняет последнюю папку и позицию просмотра, предлагает продолжить просмотр или начать заново;
 - поддерживает внешние `.srt`, `.ass`, `.ssa`, выбор дорожек и аудиовыхода mpv;
 - даёт паузу, остановку видео без закрытия вывода, перемотку, громкость, масштабирование и локальные горячие клавиши;
-- хранит логи в `%LOCALAPPDATA%\ScreenPilot\logs\screenpilot.log`, не допускает второй экземпляр и копирует обезличенную диагностику в буфер обмена.
+- хранит настройки и позиции просмотра в `%APPDATA%\PashaApps\ScreenPilot`, а логи, recovery и lock — в `%LOCALAPPDATA%\PashaApps\ScreenPilot`; не допускает второй экземпляр и копирует обезличенную диагностику в буфер обмена.
 
 ## Быстрый старт
 
-Для запуска из исходников нужны Windows, JDK 21 и локальный runtime mpv из [vendor/mpv/README.md](vendor/mpv/README.md). Runtime специально не хранится в Git и приложение никогда не скачивает его само.
+Для запуска из исходников нужны Windows, JDK 21 и локальный runtime mpv из [vendor/mpv/README.md](vendor/mpv/README.md). Runtime не хранится в Git: один файл `mpv.exe` больше лимита обычного GitHub Git (100 МБ). Его восстанавливает hash-checked скрипт сборки; само приложение никогда ничего не скачивает.
 
 ```powershell
 .\gradlew.bat clean test integrationTest
@@ -32,15 +32,27 @@ ScreenPilot — личное Windows-приложение для воспрои�
 
 ## Установщик
 
-Сборка проверяет SHA-256 каждого файла локального mpv runtime, создаёт self-contained app image и per-user EXE: Java отдельно пользователю не нужна, права администратора не требуются.
+ScreenPilot следует стандарту AppFleet для Windows: `jpackage` создаёт self-contained app-image со встроенной Java Runtime, а Inno Setup 6 собирает конечный EXE для текущего пользователя. Java и права администратора пользователю не нужны.
+
+Одна команда собирает и проверяет выпуск. Базовая версия задаётся только свойством `version` в `gradle.properties`; для конкретного release-кандидата её можно однократно переопределить параметром Gradle в формате `MAJOR.MINOR.PATCH`.
 
 ```powershell
-.\gradlew.bat :screenpilot-app:packageInstaller
+.\gradlew.bat clean buildWindowsInstaller "-Pversion=0.1.0"
 ```
 
-Готовый файл появляется в `screenpilot-app\build\jpackage\installer\ScreenPilot-0.1.0.exe`. Для быстрой проверки без установки используется `:screenpilot-app:packageAppImage`.
+В `dist\release\0.1.0\` появятся ровно три обязательных файла:
 
-EXE и mpv binary намеренно не публикуются в Git-репозитории. Перед публичной раздачей самого установщика необходимо закрыть лицензионную проверку точной сборки mpv и её зависимостей; текущая личная сборка и исходный код содержат [зафиксированные хэши и notices](vendor/mpv/README.md).
+- `ScreenPilot-Setup-0.1.0-x64.exe`;
+- `ScreenPilot-Setup-0.1.0-x64.exe.sha256`;
+- `appfleet-manifest.json`.
+
+Установщик создаёт запись Windows, ярлык в меню «Пуск» и необязательный ярлык на рабочем столе. Он устанавливает заменяемые файлы в `%LOCALAPPDATA%\Programs\PashaApps\ScreenPilot`, а при обновлении сохраняет каталог установки, ярлыки, настройки и пользовательские данные. Удаление программы не удаляет settings, resume, логи или recovery без отдельного действия пользователя.
+
+Первый запуск новой версии копирует существующие settings, resume, recovery и логи из старого расположения `%LOCALAPPDATA%\ScreenPilot` в стандартные каталоги, не удаляя исходные файлы и не перезаписывая уже существующие новые данные.
+
+Для быстрой проверки без установки используется `:screenpilot-app:packageAppImage`. Сборочная машина должна иметь Inno Setup 6; путь к `ISCC.exe` можно передать как `-PinnoCompiler=C:\path\to\ISCC.exe` или через переменную окружения `INNO_SETUP_COMPILER`.
+
+GitHub Actions повторяет эту же сборку: на `main` создаёт проверяемый artifact, а при теге `vMAJOR.MINOR.PATCH` публикует три release asset в GitHub Releases. Перед созданием первого публичного тега проверьте комплект уведомлений для поставляемой сборки mpv, описанный в [vendor/mpv/THIRD_PARTY_NOTICES.md](vendor/mpv/THIRD_PARTY_NOTICES.md).
 
 ## Проверка качества
 
@@ -48,10 +60,10 @@ EXE и mpv binary намеренно не публикуются в Git-репо
 
 ```powershell
 .\gradlew.bat --no-daemon clean test integrationTest
-.\gradlew.bat --no-daemon :screenpilot-app:packageInstaller
+.\gradlew.bat --no-daemon clean buildWindowsInstaller "-Pversion=0.1.0"
 ```
 
-`packageInstaller` требует WiX Toolset 3.x, который `jpackage` обнаруживает автоматически. Аппаратные результаты и оставшиеся проверки находятся в [чек-листе](docs/hardware-test-checklist.md), выпускной статус — в [release checklist](docs/release-checklist.md).
+`buildWindowsInstaller` сам запускает unit/component и integration tests, затем создаёт app-image, Inno Setup EXE, SHA-256 и манифест AppFleet. WiX больше не нужен. Аппаратные результаты и оставшиеся проверки находятся в [чек-листе](docs/hardware-test-checklist.md), выпускной статус — в [release checklist](docs/release-checklist.md).
 
 ## Устройство проекта
 

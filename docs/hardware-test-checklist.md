@@ -20,7 +20,8 @@
 | Read-only HDMI discovery | PASS | `QueryDisplayConfig` обнаружил активный target `257` с `DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HDMI`; console probe показал внешний `Generic PnP Monitor`, `\\.\DISPLAY2`, 1920×1080 @ 59,940 Гц и 80 подтверждённых режимов. Настройки Windows не менялись. |
 | Точная частота внешнего экрана | PASS | Рациональная частота из Display Configuration API: 59,940 Гц; не сведена к 59 или 60 Гц во внутренней модели. |
 | Опрос topology | PASS | `display-poll-smoke` получил 3 path(s) и опубликовал первый snapshot через поток `display-poller`; параметры Windows не менялись. |
-| `DisplayConfigGetDeviceInfo` metadata | PASS | Вызовы реализованы и выполнены. На текущем AMD-драйвере все пакеты `GET_*` вернули `ERROR_GEN_FAILURE` (31), поэтому имя/EDID/preferred mode/Advanced Color отсутствуют, а GDI-связь явно помечена `FALLBACK`; read-only fallback через `EnumDisplayDevicesW` и `EnumDisplaySettingsExW` подтвердил `DISPLAY2`. |
+| `DisplayConfigGetDeviceInfo` metadata активного internal target | PASS | 16.09.2026 исправлены порядок полей `DISPLAYCONFIG_DEVICE_INFO_HEADER` и полный 80-байтный `DISPLAYCONFIG_TARGET_PREFERRED_MODE`. Read-only `display-probe` успешно прочитал имя/source/preferred mode активного встроенного экрана. Прежний вывод об исключительной ошибке AMD-драйвера отозван. |
+| `DisplayConfigGetDeviceInfo` metadata внешнего target после исправления layout | NOT TESTED | Для повторной проверки нужен подключённый HDMI-экран. |
 | Snapshot до display mutation | PASS | Перед каждым реальным Stage 5 smoke test атомарно записан `RecoveryRecord` с lossless bytes active `DISPLAYCONFIG_PATH_INFO`/`DISPLAYCONFIG_MODE_INFO`, topology ID из CCD database, исходными `DEVMODEW`, target и SHA-256. Journal закрывался только после restore. |
 | Временный режим только external target | PASS | На `\\.\DISPLAY2` драйвер принял `1280×720 @ 60 Гц` после `CDS_TEST`; read-back подтвердил ровно `1280×720 @ 60,000 Гц`. Встроенный `\\.\DISPLAY1` не получал новый `DEVMODEW`. Через 3 с восстановлены исходные `1920×1080 @ 59,940 Гц`. |
 | Защита от округления дробной частоты | PASS | Первый безопасный smoke выявил несоответствие: текущие 59,940 Гц драйвер принимает в `DEVMODEW` только как 60 Гц. Операция была откатана. Реализация изменена: дробный `DisplayMode` не округляется и не передаётся в `ChangeDisplaySettingsExW`; разрешены только явно перечисленные драйвером modes. |
@@ -40,10 +41,13 @@
 | UI этапа 7: resume | NOT TESTED | До исправления 0.1.0 после остановки повторный старт начинал файл с начала без вопроса. Теперь позиция перепроверяется перед стартом и есть unit-тест выбора «С начала», но физическая проверка на HDMI нужна. |
 | UI этапа 7: внешние субтитры | NOT TESTED | Команда mpv `sub-add` и unit/integration tests реализованы; подходящий фильм с субтитрами пока не проверялся вручную. |
 | UI этапа 7: drag-and-drop | PASS | Пользователь вручную проверил перетаскивание файлов и перестановку строк плейлиста. |
-| Этап 8: single instance | PASS | Unit-тест проверяет file lock `%LOCALAPPDATA%\ScreenPilot\screenpilot.lock`, отказ второго владельца и освобождение после закрытия. |
+| Этап 8: single instance | PASS | Unit-тест проверяет file lock `%LOCALAPPDATA%\PashaApps\ScreenPilot\screenpilot.lock`, отказ второго владельца и освобождение после закрытия. |
 | Этап 8: logs и диагностика | PASS | 0.1.0 пишет UTF-8 log с ротацией; unit-тест подтверждает вырезание Windows-путей из отчёта. |
 | Этап 8: долгий запуск / UI hot unplug-replug / Windows 11 | NOT TESTED | Требуются отдельные физические проверки; их отсутствие не маскируется автоматическими тестами. |
-| Этап 9: app image и per-user EXE | PASS | 21.08.2026 собраны `packageAppImage` и `packageInstaller`; startup smoke упакованного UI прошёл на Windows 10 без HDMI. |
+| Этап 9: app image и per-user EXE | PASS | 29.08.2026 `buildWindowsInstaller` собрал self-contained app-image и Inno Setup EXE. Чистая установка, обновление и удаление остаются `NOT TESTED`. |
+| Release 0.1.0: нативная иконка EXE | PASS | 17.09.2026 `verifyAppImageNativeIcon` открыл упакованный `ScreenPilot.exe` как ресурсный модуль Windows и подтвердил `RT_GROUP_ICON`, `RT_ICON`, слой 256×256. Визуальное соответствие иконки на чистой системе остаётся `NOT TESTED`. |
+| Release 0.1.0: точное размещение окна mpv по PID и physical bounds | NOT TESTED | Автотесты проверяют фильтрацию по PID, exact `SetWindowPos` и read-back bounds без JavaFX logical coordinates. Физический монитор с mixed DPI после этой реализации не подключён. |
+| Release 0.1.0: карточка незавершённого recovery | NOT TESTED | Есть unit-тест, что pending journal блокирует старт output, и реализация требует явного выбора «Восстановить» либо «Оставить текущую конфигурацию». Проверка на реальном stale journal/дисплее не выполнялась. |
 | Этап 9: clean install/update/uninstall | NOT TESTED | EXE намеренно не устанавливался в рабочий профиль во время сборки. |
 
 Эталонная среда: Windows 10 Pro 22H2 build 19045; AMD Radeon Graphics driver `31.0.12046.15003`; mpv `v0.41.0-744-g304426c39`. Windows видит внешний HDMI `DISPLAY2` 1920×1080 @ 59,940 Гц в extended mode.

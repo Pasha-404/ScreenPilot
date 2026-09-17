@@ -16,7 +16,8 @@ import java.util.regex.Pattern;
 /** Produces support data without exposing local media paths or user-profile names. */
 final class DiagnosticReport {
 
-    private static final Pattern WINDOWS_PATH = Pattern.compile("(?i)(?:[a-z]:\\\\|\\\\\\\\)[^\\r\\n]+?");
+    /** Redact from a drive/UNC prefix through the log line: privacy is worth more than its free text suffix. */
+    private static final Pattern WINDOWS_PATH = Pattern.compile("(?i)(?:[a-z]:[\\\\/]|\\\\\\\\)[^\\r\\n]*");
     private static final Pattern ERROR_CODE = Pattern.compile("\\b(?:DSP|PLY|AUD|SUB|CFG|APP)-\\d{3}\\b");
 
     private DiagnosticReport() {

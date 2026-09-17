@@ -4,16 +4,19 @@
 
 | Пункт | Статус | Результат |
 |---|---|---|
-| Чистая сборка и unit/component tests | PASS | `clean test integrationTest` проходит на JDK 21.0.10. |
+| Чистая сборка и unit/component tests | PASS | 17.09.2026 `clean test integrationTest` прошла на JDK 21.0.10. |
 | Известный дефект повторного старта после EOF | PASS | Добавлен регрессионный тест: при каждой обычной загрузке mpv получает `set_property pause false`. |
 | Resume: «С начала» | PASS | Автотест подтверждает удаление сохранённой позиции после выбора «С начала». |
 | Повреждённые settings/recovery | PASS | Тесты persistence quarantine повреждённые JSON и загружают безопасные defaults. |
 | Один экземпляр | PASS | Автотест удерживает lock, отклоняет второго владельца и разрешает запуск после освобождения. |
 | Логи и диагностика | PASS | Logback, ротация и redaction отчёта покрыты сборкой и unit-тестом. |
 | Проверка hash mpv | PASS | `verifyMpvRuntime` сверил три зафиксированных SHA-256 до упаковки. |
-| Self-contained app image | PASS | `packageAppImage` собран; скрытый startup smoke успешно запустил упакованный UI на Windows 10 без HDMI. |
-| Per-user EXE installer | PASS | WiX 3.14 и `jpackage` собрали `ScreenPilot-0.1.0.exe`. |
-| Чистая install/update/uninstall | NOT TESTED | Установщик собран, но в профиль пользователя не устанавливался во время разработки. |
+| Self-contained app image и нативная иконка | PASS | 17.09.2026 `packageAppImage` собрал self-contained image; `verifyAppImageNativeIcon` открыл финальный `ScreenPilot.exe` как resource module и подтвердил `RT_GROUP_ICON`, `RT_ICON` и слой 256×256. Запуск упакованного UI после последних изменений — `NOT TESTED`. |
+| Per-user EXE installer | PASS | 17.09.2026 Inno Setup 6.7.1 собрал `ScreenPilot-Setup-0.1.0-x64.exe` (84 487 362 байта) из self-contained app-image. Это подтверждает упаковку, но не заменяет проверку установки. |
+| AppFleet manifest и SHA-256 | PASS | `buildWindowsInstaller` и отдельный `packaging/verify-release-assets.ps1` подтвердили ровно три asset, их размер, имя, SHA-256, manifest schema 1, `desktopShortcutTask=desktopicon`, `minimumAppFleetVersion=2.0.0` и metadata финального JAR. |
+| GitHub Actions: сборка и GitHub Release | NOT TESTED | Workflow повторяет локальный конвейер: восстанавливает pinned mpv с проверкой SHA-256, собирает три assets и публикует их при теге `vMAJOR.MINOR.PATCH`. Фактический cloud run станет доступен только после коммита и push. |
+| Notices и исходники для публичной поставки mpv | BLOCKED | Закреплённая Windows-сборка mpv — отдельный сторонний binary. Текущий `THIRD_PARTY_NOTICES.md` прямо отмечает отсутствие полного комплекта notices/SBOM и проверки условий для `d3dcompiler_43.dll`. Без выбранного и выполненного лицензионного пути публичный тег с этим EXE создавать нельзя. |
+| Чистая install/update/uninstall | NOT TESTED | Не выполнять в рабочем профиле без отдельной ручной проверки; нужны чистый профиль или VM. |
 | HDMI-аудио на устройстве с динамиками | NOT TESTED | У доступного монитора нет подтверждённых динамиков. |
 | Реальный телевизор | NOT TESTED | Телевизор пока недоступен. |
 | UI hot unplug/replug | NOT TESTED | Технический контур проверялся ранее; новый UI/release build физически не проверялся. |

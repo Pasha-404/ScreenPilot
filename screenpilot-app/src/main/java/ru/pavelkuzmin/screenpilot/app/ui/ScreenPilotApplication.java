@@ -32,7 +32,8 @@ public final class ScreenPilotApplication extends Application {
     private MainViewController controller;
     private SingleInstanceGuard instanceGuard;
     private String startupFailure;
-    private boolean closing;
+    private boolean closeRequested;
+    private boolean cleanupCompleted;
 
     public static void launchApplication(String[] args) {
         launch(ScreenPilotApplication.class, args);
@@ -42,7 +43,7 @@ public final class ScreenPilotApplication extends Application {
     public void init() {
         ApplicationPaths.configureLogging();
         try {
-            instanceGuard = SingleInstanceGuard.acquire(ApplicationPaths.applicationDataDirectory());
+            instanceGuard = SingleInstanceGuard.acquire(ApplicationPaths.localDataDirectory());
         } catch (IOException exception) {
             startupFailure = "Не удалось проверить, запущен ли другой экземпляр приложения.";
         }
@@ -57,7 +58,7 @@ public final class ScreenPilotApplication extends Application {
             alert.setHeaderText(startupFailure == null ? "ScreenPilot уже запущен." : startupFailure);
             alert.setContentText(startupFailure == null
                     ? "Закройте работающее окно ScreenPilot и повторите запуск."
-                    : "Закройте ScreenPilot, проверьте доступ к %LOCALAPPDATA% и повторите запуск.");
+                    : "Закройте ScreenPilot, проверьте доступ к папке данных пользователя и повторите запуск.");
             alert.showAndWait();
             Platform.exit();
             return;
@@ -86,17 +87,24 @@ public final class ScreenPilotApplication extends Application {
 
         primaryStage.setTitle("ScreenPilot");
         configureWindowIcons(primaryStage);
-        primaryStage.setMinWidth(ResponsiveWindowSize.MIN_WIDTH);
-        primaryStage.setMinHeight(ResponsiveWindowSize.MIN_HEIGHT);
+        primaryStage.setMinWidth(Math.min(ResponsiveWindowSize.MIN_WIDTH,
+                Math.max(ResponsiveWindowSize.ABSOLUTE_MIN_WIDTH, desktop.getWidth() - 24)));
+        primaryStage.setMinHeight(Math.min(ResponsiveWindowSize.MIN_HEIGHT,
+                Math.max(ResponsiveWindowSize.ABSOLUTE_MIN_HEIGHT, desktop.getHeight() - 24)));
         primaryStage.setScene(scene);
         primaryStage.setOnCloseRequest(event -> {
-            if (closing) {
-                controller.close();
+            if (cleanupCompleted) {
                 return;
             }
             event.consume();
-            closing = true;
-            service.stopOutput(() -> javafx.application.Platform.runLater(primaryStage::close));
+            if (closeRequested) {
+                return;
+            }
+            closeRequested = true;
+            service.stopOutput(() -> javafx.application.Platform.runLater(() -> {
+                cleanupCompleted = true;
+                primaryStage.close();
+            }));
         });
         controller.attachStage(primaryStage);
         primaryStage.show();

@@ -3,8 +3,10 @@ package ru.pavelkuzmin.screenpilot.app.ui;
 /** Calculates a usable initial scene size from the laptop's available desktop area. */
 record ResponsiveWindowSize(double width, double height) {
 
-    static final double MIN_WIDTH = 960;
-    static final double MIN_HEIGHT = 540;
+    static final double MIN_WIDTH = 720;
+    static final double MIN_HEIGHT = 480;
+    static final double ABSOLUTE_MIN_WIDTH = 480;
+    static final double ABSOLUTE_MIN_HEIGHT = 360;
     private static final double PREFERRED_WIDTH = 1_366;
     private static final double PREFERRED_HEIGHT = 820;
     private static final double HORIZONTAL_MARGIN = 48;
@@ -18,8 +20,8 @@ record ResponsiveWindowSize(double width, double height) {
 
     static ResponsiveWindowSize forAvailableDesktop(double availableWidth, double availableHeight) {
         return new ResponsiveWindowSize(
-                initialDimension(availableWidth, HORIZONTAL_MARGIN, MIN_WIDTH, PREFERRED_WIDTH),
-                initialDimension(availableHeight, VERTICAL_MARGIN, MIN_HEIGHT, PREFERRED_HEIGHT)
+                initialDimension(availableWidth, HORIZONTAL_MARGIN, ABSOLUTE_MIN_WIDTH, PREFERRED_WIDTH),
+                initialDimension(availableHeight, VERTICAL_MARGIN, ABSOLUTE_MIN_HEIGHT, PREFERRED_HEIGHT)
         );
     }
 

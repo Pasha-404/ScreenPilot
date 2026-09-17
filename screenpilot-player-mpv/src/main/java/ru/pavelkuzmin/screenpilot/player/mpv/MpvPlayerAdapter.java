@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.OptionalLong;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -69,6 +70,8 @@ public final class MpvPlayerAdapter implements AutoCloseable {
     private Optional<Duration> lastDuration = Optional.empty();
     private List<AudioOutputDevice> audioOutputs = List.of();
     private CompletableFuture<MediaInfo> pendingLoad;
+    /** Increments for every process attempt so an old load timeout cannot fail its replacement. */
+    private long pendingLoadAttempt;
     private boolean stopRequested;
     private boolean softwareDecode;
     private boolean fallbackAttempted;
@@ -117,6 +120,12 @@ public final class MpvPlayerAdapter implements AutoCloseable {
         return Optional.ofNullable(windowTitle);
     }
 
+    /** OS process that owns the uniquely titled output window, available after a successful start. */
+    public OptionalLong processId() {
+        Process currentProcess = process;
+        return currentProcess == null ? OptionalLong.empty() : OptionalLong.of(currentProcess.pid());
+    }
+
     public Flow.Publisher<PlayerNotification> notifications() {
         return notifications;
     }
@@ -145,9 +154,10 @@ public final class MpvPlayerAdapter implements AutoCloseable {
                 lastPosition = Duration.ZERO;
                 lastDuration = Optional.empty();
                 pendingLoad = result;
+                fallbackAttempted = false;
                 transition(PlayerEvent.LOAD_REQUESTED);
                 command("loadfile", List.of("loadfile", normalizedFile.toString(), "replace"), COMMAND_TIMEOUT);
-                serial.schedule(() -> failPendingLoadIfUnchanged(result), LOAD_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+                schedulePendingLoadTimeout(result);
             } catch (Exception exception) {
                 result.completeExceptionally(exception);
                 fail("PLY-003", "Не удалось открыть видеофайл.", exception);
@@ -335,9 +345,11 @@ public final class MpvPlayerAdapter implements AutoCloseable {
         try {
             containmentHandle = containment.attach(process);
         } catch (IOException exception) {
-            containmentHandle = ProcessContainment.Handle.none();
-            notifications.submit(new PlayerNotification.Diagnostic(
-                    "PLY-001", "Защита дочернего видеоплеера недоступна.", exception.getMessage()));
+            // External output must never continue with a child process that ScreenPilot cannot reliably
+            // terminate. A caller that deliberately uses ProcessContainment.disabled() still opts out
+            // explicitly (for metadata/integration probes), but a failed Windows Job assignment is fatal.
+            closeProcessResources();
+            throw new IOException("PLY-001: Windows не позволила защитить дочерний видеоплеер от зависания.", exception);
         }
         try {
             ipc = ipcConnector.connect(profile.ipcPipe(), IPC_CONNECT_TIMEOUT);
@@ -481,13 +493,16 @@ public final class MpvPlayerAdapter implements AutoCloseable {
         notifications.submit(new PlayerNotification.Diagnostic(
                 "PLY-004", "Аппаратное декодирование недоступно — используется процессор.", technicalDetail));
         try {
-            closeProcessResources();
+            closeProcessResources(true);
             startProcess(true);
             loadedFile = fileToReload;
             pendingStartPosition = positionToRestore;
             pauseAfterLoad = restorePaused;
             transition(PlayerEvent.LOAD_REQUESTED);
             command("loadfile after hardware decode fallback", List.of("loadfile", fileToReload.toString(), "replace"), COMMAND_TIMEOUT);
+            if (pendingLoad != null) {
+                schedulePendingLoadTimeout(pendingLoad);
+            }
         } catch (Exception exception) {
             fail("PLY-005", "Видео не удалось декодировать.", exception);
         }
@@ -537,8 +552,13 @@ public final class MpvPlayerAdapter implements AutoCloseable {
         return response;
     }
 
-    private void failPendingLoadIfUnchanged(CompletableFuture<MediaInfo> expected) {
-        if (pendingLoad == expected && !expected.isDone()) {
+    private void schedulePendingLoadTimeout(CompletableFuture<MediaInfo> expected) {
+        long attempt = ++pendingLoadAttempt;
+        serial.schedule(() -> failPendingLoadIfUnchanged(expected, attempt), LOAD_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    private void failPendingLoadIfUnchanged(CompletableFuture<MediaInfo> expected, long expectedAttempt) {
+        if (pendingLoad == expected && pendingLoadAttempt == expectedAttempt && !expected.isDone()) {
             fail("PLY-003", "Не удалось открыть видеофайл.", new TimeoutException("mpv file-loaded event timed out"));
         }
     }
@@ -547,6 +567,7 @@ public final class MpvPlayerAdapter implements AutoCloseable {
         if (pendingLoad != null) {
             pendingLoad.complete(media);
             pendingLoad = null;
+            pendingLoadAttempt++;
         }
     }
 
@@ -554,12 +575,17 @@ public final class MpvPlayerAdapter implements AutoCloseable {
         if (pendingLoad != null) {
             pendingLoad.completeExceptionally(exception);
             pendingLoad = null;
+            pendingLoadAttempt++;
         }
         publishState(PlayerState.FAILED);
         notifications.submit(new PlayerNotification.Failure(code, message, exception.getMessage()));
     }
 
     private void closeProcessResources() {
+        closeProcessResources(false);
+    }
+
+    private void closeProcessResources(boolean retainPendingLoad) {
         stopRequested = true;
         if (state != PlayerState.STOPPED && state != PlayerState.STOPPING) {
             publishState(PlayerState.STOPPING);
@@ -599,7 +625,10 @@ public final class MpvPlayerAdapter implements AutoCloseable {
         pendingStartPosition = Duration.ZERO;
         lastPosition = Duration.ZERO;
         lastDuration = Optional.empty();
-        pendingLoad = null;
+        if (!retainPendingLoad) {
+            pendingLoad = null;
+            pendingLoadAttempt++;
+        }
         pauseAfterLoad = false;
         windowTitle = null;
         publishState(PlayerState.STOPPED);

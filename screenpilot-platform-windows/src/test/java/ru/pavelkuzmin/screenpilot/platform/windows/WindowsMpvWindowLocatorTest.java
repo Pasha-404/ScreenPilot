@@ -8,18 +8,26 @@ import static org.assertj.core.api.Assertions.assertThat;
 class WindowsMpvWindowLocatorTest {
 
     @Test
-    void acceptsWindowWhoseCentreIsOnSelectedTarget() {
-        assertThat(WindowsMpvWindowLocator.centerIsInside(
+    void acceptsAWindowThatExactlyCoversASelectedPhysicalTarget() {
+        assertThat(WindowsMpvWindowLocator.exactlyMatches(
                 new DisplayBounds(1_920, 0, 1_920, 1_080),
                 new DisplayBounds(1_920, 0, 1_920, 1_080)
         )).isTrue();
     }
 
     @Test
-    void rejectsWindowWhoseCentreIsOnInternalDisplay() {
-        assertThat(WindowsMpvWindowLocator.centerIsInside(
-                new DisplayBounds(0, 0, 1_920, 1_080),
+    void rejectsAWindowThatOnlyHasItsCentreOnTheSelectedTarget() {
+        assertThat(WindowsMpvWindowLocator.exactlyMatches(
+                new DisplayBounds(960, 0, 1_920, 1_080),
                 new DisplayBounds(1_920, 0, 1_920, 1_080)
+        )).isFalse();
+    }
+
+    @Test
+    void rejectsAWindowWithLogicalSizedBoundsOnAMixedDpiTarget() {
+        assertThat(WindowsMpvWindowLocator.exactlyMatches(
+                new DisplayBounds(-1_536, 0, 1_536, 864),
+                new DisplayBounds(-1_920, 0, 1_920, 1_080)
         )).isFalse();
     }
 }

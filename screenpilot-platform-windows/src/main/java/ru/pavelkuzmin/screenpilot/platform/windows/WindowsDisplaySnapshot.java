@@ -1,5 +1,6 @@
 package ru.pavelkuzmin.screenpilot.platform.windows;
 
+import com.sun.jna.Memory;
 import ru.pavelkuzmin.screenpilot.domain.display.DisplayMode;
 import ru.pavelkuzmin.screenpilot.domain.display.DisplayTargetAddress;
 import ru.pavelkuzmin.screenpilot.domain.display.RefreshRate;
@@ -18,6 +19,14 @@ import java.util.Objects;
 public final class WindowsDisplaySnapshot {
 
     static final int SCHEMA_VERSION = 1;
+    private static final int DISPLAYCONFIG_PATH_INFO_SIZE = 72;
+    private static final int DISPLAYCONFIG_MODE_INFO_SIZE = 64;
+    private static final int DEVMODEW_SIZE = 220;
+    private static final int DISPLAYCONFIG_PATH_ACTIVE = 0x0000_0001;
+    private static final int DISPLAYCONFIG_PATH_MODE_IDX_INVALID = 0xFFFF_FFFF;
+    private static final int MAX_PATH_COUNT = 64;
+    private static final int MAX_MODE_COUNT = 256;
+    private static final int MAX_SOURCE_COUNT = 32;
 
     private final String topologyFingerprint;
     private final int topologyId;
@@ -47,14 +56,19 @@ public final class WindowsDisplaySnapshot {
         this.targetGdiDeviceName = targetGdiDeviceName == null ? "" : targetGdiDeviceName;
         this.targetAddress = Objects.requireNonNull(targetAddress, "targetAddress");
         this.targetMode = targetMode;
-        if (pathCount < 1 || modeCount < 0) {
+        if (pathCount < 1 || pathCount > MAX_PATH_COUNT || modeCount < 0 || modeCount > MAX_MODE_COUNT) {
             throw new IllegalArgumentException("Invalid DisplayConfig array counts");
         }
         this.pathCount = pathCount;
-        this.pathBytes = copyNonEmpty(pathBytes, "pathBytes");
+        this.pathBytes = copyExactLength(pathBytes, Math.multiplyExact(pathCount, DISPLAYCONFIG_PATH_INFO_SIZE), "pathBytes");
         this.modeCount = modeCount;
-        this.modeBytes = modeCount == 0 ? new byte[0] : copyNonEmpty(modeBytes, "modeBytes");
+        this.modeBytes = copyExactLength(modeBytes, Math.multiplyExact(modeCount, DISPLAYCONFIG_MODE_INFO_SIZE), "modeBytes");
         this.activeSourceModes = List.copyOf(Objects.requireNonNullElse(activeSourceModes, List.of()));
+        if (this.activeSourceModes.size() > MAX_SOURCE_COUNT) {
+            throw new IllegalArgumentException("Invalid source count in Windows display snapshot");
+        }
+        validateSourceModes(this.activeSourceModes);
+        validateTopologyPayload();
     }
 
     public String topologyFingerprint() {
@@ -134,15 +148,21 @@ public final class WindowsDisplaySnapshot {
         if (version != SCHEMA_VERSION) {
             throw new IllegalArgumentException("Unsupported Windows display snapshot version " + version);
         }
+        int pathCount = requiredInt(fields, "pathCount");
+        int modeCount = requiredInt(fields, "modeCount");
+        if (pathCount < 1 || pathCount > MAX_PATH_COUNT || modeCount < 0 || modeCount > MAX_MODE_COUNT) {
+            throw new IllegalArgumentException("Invalid DisplayConfig array counts");
+        }
         int sourceCount = requiredInt(fields, "sourceCount");
-        if (sourceCount < 0 || sourceCount > 32) {
+        if (sourceCount < 0 || sourceCount > MAX_SOURCE_COUNT) {
             throw new IllegalArgumentException("Invalid source count in Windows display snapshot");
         }
         List<SourceDevMode> sources = new ArrayList<>(sourceCount);
         for (int index = 0; index < sourceCount; index++) {
             sources.add(new SourceDevMode(
                     decodedText(required(fields, "source." + index + ".gdi")),
-                    decodedBytes(required(fields, "source." + index + ".devmode"))
+                    decodedBytesOfExactLength(required(fields, "source." + index + ".devmode"), DEVMODEW_SIZE,
+                            "source." + index + ".devmode")
             ));
         }
         return new WindowsDisplaySnapshot(
@@ -155,10 +175,12 @@ public final class WindowsDisplaySnapshot {
                         Integer.parseUnsignedInt(required(fields, "targetId"))
                 ),
                 decodeOptionalMode(required(fields, "targetMode")),
-                requiredInt(fields, "pathCount"),
-                decodedBytes(required(fields, "pathBytes")),
-                requiredInt(fields, "modeCount"),
-                decodedBytes(required(fields, "modeBytes")),
+                pathCount,
+                decodedBytesOfExactLength(required(fields, "pathBytes"),
+                        Math.multiplyExact(pathCount, DISPLAYCONFIG_PATH_INFO_SIZE), "pathBytes"),
+                modeCount,
+                decodedBytesOfExactLength(required(fields, "modeBytes"),
+                        Math.multiplyExact(modeCount, DISPLAYCONFIG_MODE_INFO_SIZE), "modeBytes"),
                 sources
         );
     }
@@ -166,7 +188,7 @@ public final class WindowsDisplaySnapshot {
     static record SourceDevMode(String gdiDeviceName, byte[] devModeBytes) {
         SourceDevMode {
             gdiDeviceName = requireText(gdiDeviceName, "gdiDeviceName");
-            devModeBytes = copyNonEmpty(devModeBytes, "devModeBytes");
+            devModeBytes = copyExactLength(devModeBytes, DEVMODEW_SIZE, "devModeBytes");
         }
 
         @Override
@@ -257,10 +279,76 @@ public final class WindowsDisplaySnapshot {
         return value;
     }
 
-    private static byte[] copyNonEmpty(byte[] value, String name) {
-        if (value == null || value.length == 0) {
-            throw new IllegalArgumentException(name + " must not be empty");
+    private static byte[] copyExactLength(byte[] value, int expectedLength, String name) {
+        if (value == null || value.length != expectedLength) {
+            throw new IllegalArgumentException(name + " has unexpected size");
         }
         return value.clone();
+    }
+
+    private static byte[] decodedBytesOfExactLength(String value, int expectedLength, String name) {
+        if (expectedLength == 0 && "_".equals(value)) {
+            return new byte[0];
+        }
+        int maximumEncodedLength = Math.addExact(Math.multiplyExact((expectedLength + 2) / 3, 4), 4);
+        if (value.length() > maximumEncodedLength) {
+            throw new IllegalArgumentException(name + " exceeds its expected size");
+        }
+        byte[] decoded = decodedBytes(value);
+        if (decoded.length != expectedLength) {
+            throw new IllegalArgumentException(name + " has unexpected size");
+        }
+        return decoded;
+    }
+
+    private void validateTopologyPayload() {
+        Memory paths = new Memory(pathBytes.length);
+        paths.write(0, pathBytes, 0, pathBytes.length);
+        boolean targetAppearsInActivePath = false;
+        int pathSize = new WindowsDisplayDiscovery.DisplayConfigPathInfo().size();
+        if (pathSize != DISPLAYCONFIG_PATH_INFO_SIZE) {
+            throw new IllegalStateException("Unexpected DISPLAYCONFIG_PATH_INFO layout");
+        }
+        for (int index = 0; index < pathCount; index++) {
+            WindowsDisplayDiscovery.DisplayConfigPathInfo path = new WindowsDisplayDiscovery.DisplayConfigPathInfo(
+                    paths.share((long) index * pathSize));
+            path.read();
+            if ((path.flags & DISPLAYCONFIG_PATH_ACTIVE) == 0) {
+                throw new IllegalArgumentException("Snapshot contains an inactive DisplayConfig path");
+            }
+            validateModeIndex(path.sourceInfo.modeInfoIndex, "source", index);
+            validateModeIndex(path.targetInfo.modeInfoIndex, "target", index);
+            if (path.targetInfo.adapterId.lowPart == (int) targetAddress.adapterLuidLowPart()
+                    && path.targetInfo.adapterId.highPart == targetAddress.adapterLuidHighPart()
+                    && path.targetInfo.id == targetAddress.targetId()) {
+                targetAppearsInActivePath = true;
+            }
+        }
+        if (!targetAppearsInActivePath) {
+            throw new IllegalArgumentException("Snapshot topology does not contain its selected target");
+        }
+        if (targetMode != null && activeSourceModes.stream()
+                .noneMatch(source -> source.gdiDeviceName().equalsIgnoreCase(targetGdiDeviceName))) {
+            throw new IllegalArgumentException("Snapshot target mode has no matching source DEVMODE");
+        }
+    }
+
+    private void validateModeIndex(int rawIndex, String endpoint, int pathIndex) {
+        if (rawIndex == DISPLAYCONFIG_PATH_MODE_IDX_INVALID) {
+            return;
+        }
+        int modeIndex = rawIndex & 0xFFFF;
+        if (modeIndex >= modeCount) {
+            throw new IllegalArgumentException("Snapshot " + endpoint + " mode index is outside its mode array for path " + pathIndex);
+        }
+    }
+
+    private static void validateSourceModes(List<SourceDevMode> sourceModes) {
+        java.util.Set<String> seenNames = new java.util.HashSet<>();
+        for (SourceDevMode source : sourceModes) {
+            if (!seenNames.add(source.gdiDeviceName().toUpperCase(java.util.Locale.ROOT))) {
+                throw new IllegalArgumentException("Snapshot contains duplicate GDI source names");
+            }
+        }
     }
 }

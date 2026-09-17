@@ -3,6 +3,7 @@ package ru.pavelkuzmin.screenpilot.app.ui;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.fxml.FXML;
+import javafx.scene.Node;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
@@ -20,9 +21,9 @@ import javafx.scene.input.Dragboard;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.TransferMode;
-import javafx.stage.Screen;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
+import javafx.scene.layout.VBox;
 import ru.pavelkuzmin.screenpilot.domain.display.DisplayInfo;
 import ru.pavelkuzmin.screenpilot.domain.display.DisplayMode;
 import ru.pavelkuzmin.screenpilot.domain.media.AudioOutputDevice;
@@ -39,7 +40,6 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 
 /** FXML controller: it renders ApplicationState and delegates every command to the service. */
 public final class MainViewController {
@@ -55,6 +55,8 @@ public final class MainViewController {
     @FXML
     private Label topologyStatus;
     @FXML
+    private VBox topStatusPanel;
+    @FXML
     private Label currentFile;
     @FXML
     private Label fileDetails;
@@ -62,6 +64,8 @@ public final class MainViewController {
     private Label feedback;
     @FXML
     private Label playbackTime;
+    @FXML
+    private Label volumeValue;
     @FXML
     private ComboBox<DisplayInfo> targetSelector;
     @FXML
@@ -76,6 +80,10 @@ public final class MainViewController {
     private ListView<PlaylistItem> playlistView;
     @FXML
     private Label playlistSummary;
+    @FXML
+    private Label recoveryText;
+    @FXML
+    private VBox recoveryPanel;
     @FXML
     private Button openMediaButton;
     @FXML
@@ -108,6 +116,10 @@ public final class MainViewController {
     private Button movePlaylistDownButton;
     @FXML
     private Button addSubtitleButton;
+    @FXML
+    private Button restoreRecoveryButton;
+    @FXML
+    private Button keepCurrentConfigurationButton;
     @FXML
     private Button previousButton;
     @FXML
@@ -281,21 +293,41 @@ public final class MainViewController {
         if (target == null) {
             return;
         }
-        Optional<Integer> candidate = MpvScreenResolver.resolve(target.bounds(), Screen.getScreens());
-        if (candidate.isEmpty()) {
-            showError("Не удалось сопоставить выбранный экран с окном mpv.",
-                    "Вывод не будет запущен на встроенном экране как запасном варианте.");
-            return;
-        }
         if (!confirmDisplayPreparation(target)) {
             return;
         }
-        service.startOutput(candidate.orElseThrow());
+        service.startOutput();
     }
 
     @FXML
     private void stopOutput() {
         service.stopOutput();
+    }
+
+    @FXML
+    private void restorePendingRecovery() {
+        Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+        confirmation.initOwner(stage);
+        confirmation.setTitle("Восстановить экраны");
+        confirmation.setHeaderText("Вернуть конфигурацию Windows, сохранённую до незавершённой сессии?");
+        confirmation.setContentText("ScreenPilot применит только сохранённый снимок конфигурации экранов и затем проверит результат. "
+                + "Если Windows или подключённые устройства уже изменились, запись останется для безопасной повторной попытки.");
+        if (confirmation.showAndWait().filter(ButtonType.OK::equals).isPresent()) {
+            service.restorePendingRecovery();
+        }
+    }
+
+    @FXML
+    private void keepCurrentDisplayConfiguration() {
+        Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+        confirmation.initOwner(stage);
+        confirmation.setTitle("Оставить текущую конфигурацию");
+        confirmation.setHeaderText("Не восстанавливать сохранённую конфигурацию экранов?");
+        confirmation.setContentText("ScreenPilot не будет менять настройки Windows и закроет запись восстановления. "
+                + "Используйте это только если текущая конфигурация экранов уже правильная.");
+        if (confirmation.showAndWait().filter(ButtonType.OK::equals).isPresent()) {
+            service.keepCurrentDisplayConfiguration();
+        }
     }
 
     @FXML
@@ -326,9 +358,23 @@ public final class MainViewController {
     }
 
     @FXML
+    private void seekFromKeyboard(KeyEvent event) {
+        if (isSliderCommitKey(event.getCode())) {
+            seekFromSlider();
+        }
+    }
+
+    @FXML
     private void commitVolume() {
         if (!volumeSlider.isDisabled()) {
             service.setVolume((int) Math.round(volumeSlider.getValue()));
+        }
+    }
+
+    @FXML
+    private void commitVolumeFromKeyboard(KeyEvent event) {
+        if (isSliderCommitKey(event.getCode())) {
+            commitVolume();
         }
     }
 
@@ -348,33 +394,46 @@ public final class MainViewController {
     }
 
     void handleShortcut(KeyEvent event) {
-        if (event.getTarget() instanceof TextInputControl) {
+        if (event.getTarget() instanceof TextInputControl || focusedInteractiveControl() || aSelectorPopupIsOpen()) {
             return;
         }
         switch (event.getCode()) {
             case SPACE -> {
-                service.togglePause();
-                event.consume();
+                if (canControlPlaybackFromShortcut()) {
+                    service.togglePause();
+                    event.consume();
+                }
             }
             case LEFT -> {
-                service.seekRelative(Duration.ofSeconds(event.isControlDown() ? -60 : -10));
-                event.consume();
+                if (canControlPlaybackFromShortcut()) {
+                    service.seekRelative(Duration.ofSeconds(event.isControlDown() ? -60 : -10));
+                    event.consume();
+                }
             }
             case RIGHT -> {
-                service.seekRelative(Duration.ofSeconds(event.isControlDown() ? 60 : 10));
-                event.consume();
+                if (canControlPlaybackFromShortcut()) {
+                    service.seekRelative(Duration.ofSeconds(event.isControlDown() ? 60 : 10));
+                    event.consume();
+                }
             }
             case UP -> {
-                changeVolumeBy(5);
-                event.consume();
+                if (canControlPlaybackFromShortcut()) {
+                    changeVolumeBy(5);
+                    event.consume();
+                }
             }
             case DOWN -> {
-                changeVolumeBy(-5);
-                event.consume();
+                if (canControlPlaybackFromShortcut()) {
+                    changeVolumeBy(-5);
+                    event.consume();
+                }
             }
             case ESCAPE -> {
-                service.stopOutput();
-                event.consume();
+                OutputSessionState outputState = store.current().outputState();
+                if (outputState == OutputSessionState.OUTPUT_IDLE || outputState == OutputSessionState.OUTPUT_ACTIVE) {
+                    service.stopOutput();
+                    event.consume();
+                }
             }
             case O -> {
                 if (event.isControlDown()) {
@@ -403,6 +462,9 @@ public final class MainViewController {
         try {
             List<DisplayInfo> targets = state.externalTargets();
             targetSelector.setItems(FXCollections.observableArrayList(targets));
+            targetSelector.setPromptText(state.refreshingDisplays()
+                    ? "Ищу внешние экраны…"
+                    : targets.isEmpty() ? "Внешний экран не подключён" : "Выберите внешний экран");
             boolean outputChanging = state.outputState() == OutputSessionState.PREPARING_DISPLAY
                     || state.outputState() == OutputSessionState.OUTPUT_IDLE
                     || state.outputState() == OutputSessionState.OUTPUT_ACTIVE
@@ -417,6 +479,8 @@ public final class MainViewController {
             DisplayInfo target = state.selectedTarget().orElse(null);
             List<DisplayMode> modes = modeOptions(target);
             modeSelector.setItems(FXCollections.observableArrayList(modes));
+            modeSelector.setPromptText(target == null ? "Сначала выберите экран"
+                    : modes.isEmpty() ? "Режимы недоступны" : "Выберите режим");
             modeSelector.setValue(modes.stream()
                     .filter(mode -> mode.equals(state.selectedMode()))
                     .findFirst()
@@ -426,11 +490,10 @@ public final class MainViewController {
 
             currentFile.setText(state.selectedMedia() == null ? "Видео пока не выбрано" : fileName(state.selectedMedia()));
             fileDetails.setText(state.selectedMedia() == null
-                    ? "Откройте один локальный MKV или MP4. На ноутбуке preview не создаётся."
+                    ? "Добавьте локальные видеофайлы. На ноутбуке preview не создаётся."
                     : state.selectedMedia().toString());
             feedback.setText(state.userMessage() == null ? "Готово." : state.userMessage());
-            displayStatus.setText(target == null ? "Внешний экран не выбран" : "Внешний экран выбран");
-            topologyStatus.setText(target == null ? "Ожидание HDMI" : topologyLabel(target));
+            applyStatusPresentation(statusPresentation(state, targets, target));
 
             PlaybackUiState playback = state.playback();
             boolean activePlayback = state.outputState() == OutputSessionState.OUTPUT_ACTIVE
@@ -466,6 +529,7 @@ public final class MainViewController {
             if (!volumeSlider.isValueChanging()) {
                 volumeSlider.setValue(playback.volumePercent());
             }
+            volumeValue.setText(playback.volumePercent() + "%");
             fitButton.setDisable(!activePlayback);
             fillButton.setDisable(!activePlayback);
             oneToOneButton.setDisable(!activePlayback);
@@ -514,6 +578,17 @@ public final class MainViewController {
                     ? "Плейлист пуст"
                     : "Файлов: " + playlist.size() + " · известная длительность: "
                     + timeLabel(state.playlist().knownTotalDuration()));
+
+            boolean recoveryNeeded = state.pendingRecovery() != null;
+            recoveryPanel.setVisible(recoveryNeeded);
+            recoveryPanel.setManaged(recoveryNeeded);
+            if (recoveryNeeded) {
+                recoveryText.setText("Сессия от " + state.pendingRecovery().startedAt()
+                        + " не завершила восстановление конфигурации Windows. Выберите безопасное действие.");
+            }
+            boolean recoveryInProgress = state.outputState() == OutputSessionState.RESTORING_DISPLAY;
+            restoreRecoveryButton.setDisable(!recoveryNeeded || recoveryInProgress);
+            keepCurrentConfigurationButton.setDisable(!recoveryNeeded || recoveryInProgress);
         } finally {
             applyingState = false;
         }
@@ -523,6 +598,73 @@ public final class MainViewController {
     private void changeVolumeBy(int delta) {
         int current = store.current().playback().volumePercent();
         service.setVolume(Math.clamp(current + delta, 0, 100));
+    }
+
+    private boolean focusedInteractiveControl() {
+        Node focused = stage == null || stage.getScene() == null ? null : stage.getScene().getFocusOwner();
+        for (Node node = focused; node != null; node = node.getParent()) {
+            if (node instanceof Button || node instanceof ComboBox<?> || node instanceof ListView<?> || node instanceof Slider
+                    || node instanceof TextInputControl) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean aSelectorPopupIsOpen() {
+        return targetSelector.isShowing() || modeSelector.isShowing() || audioOutputSelector.isShowing()
+                || audioTrackSelector.isShowing() || subtitleSelector.isShowing();
+    }
+
+    private boolean canControlPlaybackFromShortcut() {
+        ApplicationState state = store.current();
+        return state.outputState() == OutputSessionState.OUTPUT_ACTIVE && state.playback().controlsAvailable();
+    }
+
+    private static boolean isSliderCommitKey(KeyCode keyCode) {
+        return switch (keyCode) {
+            case LEFT, RIGHT, UP, DOWN, HOME, END, PAGE_UP, PAGE_DOWN -> true;
+            default -> false;
+        };
+    }
+
+    private void applyStatusPresentation(StatusPresentation status) {
+        displayStatus.setText(status.title());
+        topologyStatus.setText(status.detail());
+        topStatusPanel.getStyleClass().removeAll("status-neutral", "status-warning", "status-error", "status-success");
+        topStatusPanel.getStyleClass().add(status.styleClass());
+    }
+
+    private static StatusPresentation statusPresentation(
+            ApplicationState state,
+            List<DisplayInfo> targets,
+            DisplayInfo target
+    ) {
+        if (state.pendingRecovery() != null) {
+            return new StatusPresentation("Требуется восстановление", "Завершите сценарий ниже", "status-warning");
+        }
+        if (state.refreshingDisplays()) {
+            return new StatusPresentation("Ищу экраны…", "Читаю конфигурацию Windows", "status-neutral");
+        }
+        if (state.outputState() == OutputSessionState.PREPARING_DISPLAY) {
+            return new StatusPresentation("Подготавливаю вывод…", "Проверяю экран и запускаю плеер", "status-warning");
+        }
+        if (state.outputState() == OutputSessionState.RESTORING_DISPLAY) {
+            return new StatusPresentation("Восстанавливаю экраны…", "Не закрывайте приложение", "status-warning");
+        }
+        if (state.outputState() == OutputSessionState.OUTPUT_ERROR) {
+            return new StatusPresentation("Требуется действие", "Проверьте сообщение в статусе", "status-error");
+        }
+        if (targets.isEmpty()) {
+            return new StatusPresentation("Внешний экран не подключён", "Подключите экран и нажмите «Обновить»", "status-warning");
+        }
+        if (target == null) {
+            return new StatusPresentation("Выберите внешний экран", "Найдено экранов: " + targets.size(), "status-neutral");
+        }
+        if (state.selectedMedia() == null) {
+            return new StatusPresentation("Экран выбран", topologyLabel(target), "status-success");
+        }
+        return new StatusPresentation("Готово к выводу", topologyLabel(target), "status-success");
     }
 
     private void setSelectedScaling(ScalingMode scalingMode) {
@@ -563,7 +705,7 @@ public final class MainViewController {
         alert.setHeaderText("Для этого видео сохранена позиция " + timeLabel(offer.position()) + ".");
         alert.setContentText("Выберите, продолжить просмотр или начать файл с начала.");
         alert.getButtonTypes().setAll(resume, restart);
-        service.resolveResume(alert.showAndWait().filter(resume::equals).isPresent());
+        service.resolveResume(offer, alert.showAndWait().filter(resume::equals).isPresent());
     }
 
     private static List<SubtitleChoice> subtitleChoices(List<MediaTrack> tracks) {
@@ -640,6 +782,9 @@ public final class MainViewController {
             super.updateItem(item, empty);
             setText(empty || item == null ? null : item.friendlyName() + " (" + item.connectionType() + ")");
         }
+    }
+
+    private record StatusPresentation(String title, String detail, String styleClass) {
     }
 
     private static final class ModeCell extends ListCell<DisplayMode> {

@@ -18,3 +18,4 @@
 - `0005-javafx-ui-state-and-output-placement.md` — единое состояние JavaFX и обязательная проверка размещения окна mpv на физическом target.
 - `0006-playlist-resume-and-metadata-probe.md` — in-memory плейлист, resume и отдельный headless mpv для параметров файлов.
 - `0007-release-packaging-and-hardening.md` — single instance, логи и диагностика, устранение stale pause, jpackage и проверка runtime.
+- `0008-appfleet-inno-installer.md` — Inno Setup, AppFleet manifest, постоянный AppId и разделение пользовательских данных; заменяет решение о финальном WiX-установщике из ADR-0007.

@@ -11,6 +11,7 @@ import ru.pavelkuzmin.screenpilot.domain.port.ResumeRepository;
 import ru.pavelkuzmin.screenpilot.domain.port.SettingsRepository;
 import ru.pavelkuzmin.screenpilot.domain.recovery.RecoveryRecord;
 import ru.pavelkuzmin.screenpilot.domain.settings.AppSettings;
+import ru.pavelkuzmin.screenpilot.domain.session.OutputSessionState;
 import ru.pavelkuzmin.screenpilot.platform.windows.WindowsDisplayMutator;
 import ru.pavelkuzmin.screenpilot.platform.windows.WindowsMpvWindowLocator;
 
@@ -141,6 +142,112 @@ class ScreenPilotApplicationServiceTest {
 
             assertThat(completed).containsExactly(store.current().selectedPlaylistItem().orElseThrow().fingerprint());
             assertThat(store.current().requestedStartPosition()).isZero();
+        }
+    }
+
+    @Test
+    void rejectsPlaylistChangesWhileTheOutputStateIsActive() throws Exception {
+        Path first = temporaryDirectory.resolve("first.mkv");
+        Path second = temporaryDirectory.resolve("second.mkv");
+        Files.write(first, new byte[]{1, 2, 3});
+        Files.write(second, new byte[]{4, 5, 6});
+        UiStateStore store = new UiStateStore();
+        ExecutorService serial = Executors.newSingleThreadExecutor();
+        try (ScreenPilotApplicationService service = new ScreenPilotApplicationService(
+                java.util.List::of,
+                store,
+                serial,
+                new WindowsDisplayMutator(),
+                new EmptyRecoveryJournal(),
+                new WindowsMpvWindowLocator(),
+                inertSettings(),
+                resumableRepository(new CopyOnWriteArrayList<>()),
+                inertProbe()
+        )) {
+            service.addMediaFiles(java.util.List.of(first));
+            await(() -> store.current().playlist().items().size() == 1);
+            store.publish(store.current().withOutputState(OutputSessionState.OUTPUT_ACTIVE, "Видео воспроизводится."));
+
+            service.addMediaFiles(java.util.List.of(second));
+            await(() -> store.current().userMessage().contains("нельзя менять плейлист"));
+
+            assertThat(store.current().playlist().items()).hasSize(1);
+            assertThat(store.current().selectedPlaylistItem().orElseThrow().source())
+                    .isEqualTo(first.toAbsolutePath().normalize());
+        }
+    }
+
+    @Test
+    void ignoresAResumeChoiceFromAnOlderPromptAfterTheSelectionChanges() throws Exception {
+        Path first = temporaryDirectory.resolve("first.mkv");
+        Path second = temporaryDirectory.resolve("second.mkv");
+        Files.write(first, new byte[]{1, 2, 3});
+        Files.write(second, new byte[]{4, 5, 6});
+        CopyOnWriteArrayList<MediaFingerprint> completed = new CopyOnWriteArrayList<>();
+        UiStateStore store = new UiStateStore();
+        ExecutorService serial = Executors.newSingleThreadExecutor();
+        try (ScreenPilotApplicationService service = new ScreenPilotApplicationService(
+                java.util.List::of,
+                store,
+                serial,
+                new WindowsDisplayMutator(),
+                new EmptyRecoveryJournal(),
+                new WindowsMpvWindowLocator(),
+                inertSettings(),
+                resumableRepository(completed),
+                inertProbe()
+        )) {
+            service.addMediaFiles(java.util.List.of(first));
+            await(() -> store.current().resumeOffer() != null);
+            ResumeEntry firstOffer = store.current().resumeOffer();
+
+            service.addMediaFiles(java.util.List.of(second));
+            await(() -> store.current().selectedPlaylistItem().orElseThrow().source()
+                    .equals(second.toAbsolutePath().normalize()));
+            ResumeEntry secondOffer = store.current().resumeOffer();
+
+            service.resolveResume(firstOffer, false);
+            service.selectPlaylistItem(0);
+            await(() -> store.current().playlist().selectedIndex() == 0);
+
+            assertThat(completed).isEmpty();
+            assertThat(secondOffer.fingerprint()).isNotEqualTo(firstOffer.fingerprint());
+        }
+    }
+
+    @Test
+    void surfacesAnUnfinishedRecoveryAtStartupAndBlocksNewOutputUntilTheUserDecides() throws Exception {
+        RecoveryRecord record = RecoveryRecord.begin(UUID.randomUUID(), Instant.parse("2026-09-17T10:00:00Z"),
+                "saved-display-topology");
+        UiStateStore store = new UiStateStore();
+        ExecutorService serial = Executors.newSingleThreadExecutor();
+        RecoveryJournal journal = new RecoveryJournal() {
+            @Override
+            public Optional<RecoveryRecord> findUnfinished() {
+                return Optional.of(record);
+            }
+
+            @Override
+            public void begin(RecoveryRecord ignored) {
+            }
+
+            @Override
+            public void markRestored(UUID sessionId) {
+            }
+
+            @Override
+            public void markLeftAsIs(UUID sessionId) {
+            }
+        };
+        try (ScreenPilotApplicationService service = new ScreenPilotApplicationService(
+                java.util.List::of, store, serial, new WindowsDisplayMutator(), journal,
+                new WindowsMpvWindowLocator(), inertSettings(), resumableRepository(new CopyOnWriteArrayList<>()), inertProbe())) {
+            service.start();
+            await(() -> store.current().pendingRecovery() != null);
+
+            assertThat(store.current().pendingRecovery()).isEqualTo(record);
+            assertThat(store.current().readyForOutput()).isFalse();
+            assertThat(store.current().outputState()).isEqualTo(OutputSessionState.OUTPUT_ERROR);
         }
     }
 

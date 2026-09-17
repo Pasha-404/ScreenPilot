@@ -1,6 +1,7 @@
 package ru.pavelkuzmin.screenpilot.persistence;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import ru.pavelkuzmin.screenpilot.domain.port.RecoveryJournal;
 import ru.pavelkuzmin.screenpilot.domain.recovery.RecoveryRecord;
 
@@ -44,14 +45,16 @@ public final class FileRecoveryJournal implements RecoveryJournal {
             return Optional.empty();
         }
         try {
-            RecoveryRecord record = mapper.readValue(activeRecordFile.toFile(), RecoveryRecord.class);
-            if (record.schemaVersion() > RecoveryRecord.CURRENT_SCHEMA_VERSION) {
+            JsonNode envelope = mapper.readTree(activeRecordFile.toFile());
+            int schemaVersion = envelope.path("schemaVersion").asInt(0);
+            if (schemaVersion > RecoveryRecord.CURRENT_SCHEMA_VERSION) {
                 throw new UnsupportedSchemaException(
                         activeRecordFile.getFileName().toString(),
-                        record.schemaVersion(),
+                        schemaVersion,
                         RecoveryRecord.CURRENT_SCHEMA_VERSION
                 );
             }
+            RecoveryRecord record = mapper.treeToValue(envelope, RecoveryRecord.class);
             if (!record.hasValidChecksum()) {
                 JsonFiles.quarantineCorruptFile(activeRecordFile);
                 return Optional.empty();

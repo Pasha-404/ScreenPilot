@@ -26,12 +26,19 @@ public final class MpvMediaProbe implements MediaProbe {
     private static final Duration PROBE_TIMEOUT = Duration.ofSeconds(10);
 
     private final Path executable;
+    private final ProcessContainment containment;
     private final ExecutorService queue;
     private final AtomicReference<MpvPlayerAdapter> active = new AtomicReference<>();
     private final AtomicLong generation = new AtomicLong();
 
     public MpvMediaProbe(Path executable) {
+        this(executable, ProcessContainment.disabled());
+    }
+
+    /** The production composition root supplies the same child-process containment policy as playback. */
+    public MpvMediaProbe(Path executable, ProcessContainment containment) {
         this.executable = Objects.requireNonNull(executable, "executable").toAbsolutePath().normalize();
+        this.containment = Objects.requireNonNull(containment, "containment");
         this.queue = Executors.newSingleThreadExecutor(runnable -> {
             Thread thread = new Thread(runnable, "mpv-metadata-probe");
             thread.setDaemon(true);
@@ -77,7 +84,7 @@ public final class MpvMediaProbe implements MediaProbe {
         MpvPlayerAdapter player = new MpvPlayerAdapter(
                 executable,
                 new MpvProcessLauncher(),
-                ProcessContainment.disabled(),
+                containment,
                 MpvIpcClient::connect,
                 (playerExecutable, sessionId, softwareDecode) -> MpvLaunchProfile.forMetadataProbe(playerExecutable, sessionId)
         );
