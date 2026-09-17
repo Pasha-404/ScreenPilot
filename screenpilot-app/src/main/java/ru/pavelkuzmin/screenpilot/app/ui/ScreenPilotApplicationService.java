@@ -34,6 +34,7 @@ import ru.pavelkuzmin.screenpilot.platform.windows.WindowsDisplayDiscovery;
 import ru.pavelkuzmin.screenpilot.persistence.FileRecoveryJournal;
 import ru.pavelkuzmin.screenpilot.persistence.JsonResumeRepository;
 import ru.pavelkuzmin.screenpilot.persistence.JsonSettingsRepository;
+import ru.pavelkuzmin.screenpilot.persistence.PersistenceException;
 import ru.pavelkuzmin.screenpilot.player.mpv.MpvMediaProbe;
 import ru.pavelkuzmin.screenpilot.player.mpv.MpvPlayerAdapter;
 
@@ -50,11 +51,14 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Flow;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.UnaryOperator;
 
@@ -69,6 +73,9 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
     private final DisplayDiscovery displayDiscovery;
     private final UiStateStore store;
     private final ExecutorService serial;
+    /** Stops video independently when the display poller detects that its physical target disappeared. */
+    private final ExecutorService emergencyPlayerStop = newEmergencyPlayerStopExecutor();
+    private final Set<UUID> emergencyStopRequests = ConcurrentHashMap.newKeySet();
     private final WindowsDisplayMutator displayMutator;
     private final RecoveryJournal recoveryJournal;
     private final WindowsMpvWindowLocator windowLocator;
@@ -80,6 +87,7 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
     private Instant lastResumeSavedAt = Instant.MIN;
     /** Choices made during this process prevent the same persisted entry from being offered twice. */
     private final Map<MediaFingerprint, ResumeEntry> resumeDecisions = new HashMap<>();
+    private final AtomicBoolean closeRequested = new AtomicBoolean();
     private PendingStart pendingStartAfterResumeChoice;
     private boolean endOfFilePending;
     private boolean suppressNextIdleTransition;
@@ -90,11 +98,11 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
                 store,
                 newApplicationSerialExecutor(),
                 new WindowsDisplayMutator(),
-                new FileRecoveryJournal(applicationDataDirectory()),
+                new FileRecoveryJournal(localDataDirectory()),
                 new WindowsMpvWindowLocator(),
-                new JsonSettingsRepository(applicationDataDirectory()),
-                new JsonResumeRepository(applicationDataDirectory()),
-                new MpvMediaProbe(findMpvExecutable())
+                new JsonSettingsRepository(settingsDirectory()),
+                new JsonResumeRepository(settingsDirectory()),
+                new MpvMediaProbe(findMpvExecutable(), processContainment())
         );
     }
 
@@ -107,8 +115,8 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
             WindowsMpvWindowLocator windowLocator
     ) {
         this(displayDiscovery, store, serial, displayMutator, recoveryJournal, windowLocator,
-                new JsonSettingsRepository(applicationDataDirectory()),
-                new JsonResumeRepository(applicationDataDirectory()),
+                new JsonSettingsRepository(settingsDirectory()),
+                new JsonResumeRepository(settingsDirectory()),
                 new MpvMediaProbe(findMpvExecutable()));
     }
 
@@ -140,6 +148,7 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
                     System.getProperty("screenpilot.version", "dev"), System.getProperty("os.name"),
                     System.getProperty("os.version"), System.getProperty("java.runtime.version"));
             loadSettingsOnSerial();
+            loadPendingRecoveryOnSerial();
             refreshDisplays();
         });
     }
@@ -166,7 +175,12 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
     public void selectTarget(DisplayInfo target) {
         serial.execute(() -> {
             try {
-                store.publish(store.current().withSelectedTarget(target));
+                ApplicationState state = store.current().withSelectedTarget(target);
+                if (pendingStartAfterResumeChoice != null) {
+                    pendingStartAfterResumeChoice = null;
+                    state = state.withoutResumeOffer("Экран изменён. Перед запуском снова выберите сохранённую позицию.");
+                }
+                store.publish(state);
             } catch (IllegalArgumentException exception) {
                 store.publish(store.current().withUserMessage("Выбранный внешний экран больше недоступен."));
             }
@@ -176,7 +190,12 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
     public void selectMode(DisplayMode mode) {
         serial.execute(() -> {
             try {
-                store.publish(store.current().withSelectedMode(mode));
+                ApplicationState state = store.current().withSelectedMode(mode);
+                if (pendingStartAfterResumeChoice != null) {
+                    pendingStartAfterResumeChoice = null;
+                    state = state.withoutResumeOffer("Режим экрана изменён. Перед запуском снова выберите сохранённую позицию.");
+                }
+                store.publish(state);
             } catch (IllegalArgumentException | IllegalStateException exception) {
                 store.publish(store.current().withUserMessage("Выбранный режим больше недоступен."));
             }
@@ -191,6 +210,11 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
         List<Path> files = List.copyOf(Objects.requireNonNullElse(mediaFiles, List.of()));
         serial.execute(() -> {
             if (files.isEmpty()) {
+                return;
+            }
+            if (playlistEditingBlocked()) {
+                store.publish(store.current().withUserMessage(
+                        "Сначала остановите видео: нельзя менять плейлист во время воспроизведения."));
                 return;
             }
             int added = 0;
@@ -221,6 +245,11 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
     public void selectPlaylistItem(int index) {
         serial.execute(() -> {
             try {
+                if (playlistEditingBlocked()) {
+                    store.publish(store.current().withUserMessage(
+                            "Сначала остановите видео: нельзя менять выбранный файл во время воспроизведения."));
+                    return;
+                }
                 pendingStartAfterResumeChoice = null;
                 Playlist playlist = store.current().playlist().select(index);
                 PlaylistItem item = playlist.selectedItem().orElseThrow();
@@ -234,7 +263,7 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
     public void removeSelectedPlaylistItem() {
         serial.execute(() -> {
             ApplicationState state = store.current();
-            if (state.playback().controlsAvailable()) {
+            if (playlistEditingBlocked()) {
                 store.publish(state.withUserMessage("Сначала остановите видео или выберите другой файл после остановки."));
                 return;
             }
@@ -246,6 +275,11 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
 
     public void moveSelectedPlaylistItem(int offset) {
         serial.execute(() -> {
+            if (playlistEditingBlocked()) {
+                store.publish(store.current().withUserMessage(
+                        "Сначала остановите видео: нельзя менять плейлист во время воспроизведения."));
+                return;
+            }
             Playlist playlist = store.current().playlist().moveSelectedBy(offset);
             if (playlist == store.current().playlist()) {
                 return;
@@ -256,6 +290,11 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
 
     public void movePlaylistItem(int sourceIndex, int destinationIndex) {
         serial.execute(() -> {
+            if (playlistEditingBlocked()) {
+                store.publish(store.current().withUserMessage(
+                        "Сначала остановите видео: нельзя менять плейлист во время воспроизведения."));
+                return;
+            }
             Playlist playlist = store.current().playlist().move(sourceIndex, destinationIndex);
             if (playlist == store.current().playlist()) {
                 return;
@@ -265,11 +304,21 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
     }
 
     public void resolveResume(boolean resume) {
+        resolveResume(null, resume);
+    }
+
+    /** Resolves one concrete resume prompt; a stale prompt cannot affect the current selection. */
+    public void resolveResume(ResumeEntry expectedOffer, boolean resume) {
         serial.execute(() -> {
             ApplicationState state = store.current();
             ResumeEntry offer = state.resumeOffer();
             PlaylistItem item = state.selectedPlaylistItem().orElse(null);
-            if (offer == null || item == null) {
+            PendingStart pendingStart = pendingStartAfterResumeChoice;
+            if (offer == null || item == null
+                    || (expectedOffer != null && (!expectedOffer.equals(offer)
+                    || !expectedOffer.fingerprint().equals(item.fingerprint())))
+                    || (pendingStart != null && !pendingStart.matches(item, offer))) {
+                pendingStartAfterResumeChoice = null;
                 return;
             }
             if (resume) {
@@ -280,24 +329,19 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
             }
             store.publish(state.withResumeDecision(resume));
 
-            PendingStart pendingStart = pendingStartAfterResumeChoice;
             pendingStartAfterResumeChoice = null;
-            if (pendingStart == null) {
-                return;
-            }
-            if (pendingStart.mpvScreenCandidate() == null) {
-                startPlaybackOnSerial(true);
-            } else {
-                startOutputOnSerial(pendingStart.mpvScreenCandidate(), true);
+            if (pendingStart != null) {
+                if (!pendingStart.startsOutput()) {
+                    startPlaybackOnSerial(true);
+                } else {
+                    startOutputOnSerial(true);
+                }
             }
         });
     }
 
-    public void startOutput(int mpvScreenCandidate) {
-        if (mpvScreenCandidate < 0) {
-            throw new IllegalArgumentException("mpv screen candidate must be non-negative");
-        }
-        serial.execute(() -> startOutputOnSerial(mpvScreenCandidate));
+    public void startOutput() {
+        serial.execute(() -> startOutputOnSerial(false));
     }
 
     /** Loads the selected file into a still-prepared, black mpv output session. */
@@ -307,6 +351,50 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
 
     public void stopOutput() {
         serial.execute(() -> stopOutputOnSerial("Вывод на внешний экран остановлен."));
+    }
+
+    /** Restores one user-confirmed recovery record; this operation is never automatic on application start. */
+    public void restorePendingRecovery() {
+        serial.execute(() -> {
+            RecoveryRecord record = readPendingRecovery();
+            if (record == null) {
+                return;
+            }
+            store.publish(store.current().withOutputState(OutputSessionState.RESTORING_DISPLAY,
+                    "Восстанавливаю конфигурацию экранов из незавершённой сессии…"));
+            try {
+                WindowsDisplaySnapshot snapshot = displayMutator.snapshotFrom(record);
+                displayMutator.restore(snapshot);
+                recoveryJournal.markRestored(record.sessionId());
+                ApplicationState recovered = store.current().withoutPendingRecovery(
+                        "Исходная конфигурация экранов восстановлена.");
+                store.publish(recovered.withDisplays(displayDiscovery.discover()));
+            } catch (Exception exception) {
+                LOG.error("User-requested display recovery failed", exception);
+                store.publish(store.current().withOutputState(OutputSessionState.OUTPUT_ERROR,
+                        "Не удалось восстановить конфигурацию экранов. Запись сохранена; проверьте диагностику."));
+            }
+        });
+    }
+
+    /** Archives one user-confirmed recovery record without changing Windows display configuration. */
+    public void keepCurrentDisplayConfiguration() {
+        serial.execute(() -> {
+            RecoveryRecord record = readPendingRecovery();
+            if (record == null) {
+                return;
+            }
+            try {
+                recoveryJournal.markLeftAsIs(record.sessionId());
+                ApplicationState resolved = store.current().withoutPendingRecovery(
+                        "Текущая конфигурация экранов оставлена без изменений.");
+                store.publish(resolved.withDisplays(displayDiscovery.discover()));
+            } catch (RuntimeException | IOException exception) {
+                LOG.error("Could not archive the user-approved recovery record", exception);
+                store.publish(store.current().withOutputState(OutputSessionState.OUTPUT_ERROR,
+                        "Не удалось закрыть запись восстановления. Она сохранена для следующего запуска."));
+            }
+        });
     }
 
     public void stopOutput(Runnable completed) {
@@ -349,7 +437,7 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
                 return;
             }
             try {
-                persistResume(true);
+                persistResumeBestEffort(true);
                 output.player().stop().toCompletableFuture()
                         .get(COMMAND_TIMEOUT.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
                 transition(OutputSessionEvent.FILE_STOPPED,
@@ -429,21 +517,32 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
 
     @Override
     public void close() {
-        serial.shutdownNow();
-        mediaProbe.close();
+        if (!closeRequested.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            serial.execute(() -> {
+                try {
+                    stopOutputOnSerial("ScreenPilot завершает работу.");
+                } finally {
+                    mediaProbe.close();
+                }
+            });
+            serial.shutdown();
+            emergencyPlayerStop.shutdown();
+        } catch (java.util.concurrent.RejectedExecutionException ignored) {
+            mediaProbe.close();
+            emergencyPlayerStop.shutdownNow();
+        }
     }
 
-    private void startOutputOnSerial(int mpvScreenCandidate) {
-        startOutputOnSerial(mpvScreenCandidate, false);
-    }
-
-    private void startOutputOnSerial(int mpvScreenCandidate, boolean resumeDecisionAlreadyMade) {
+    private void startOutputOnSerial(boolean resumeDecisionAlreadyMade) {
         ApplicationState state = store.current();
         if (!state.readyForOutput()) {
             store.publish(state.withUserMessage("Сначала выберите доступный внешний экран и видеофайл."));
             return;
         }
-        if (!resumeDecisionAlreadyMade && requireResumeDecision(state, new PendingStart(mpvScreenCandidate))) {
+        if (!resumeDecisionAlreadyMade && requireResumeDecision(state, PendingStart.forOutput())) {
             return;
         }
         if (activeOutput != null || state.outputState() == OutputSessionState.PREPARING_DISPLAY
@@ -451,9 +550,16 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
             store.publish(state.withUserMessage("Предыдущая команда вывода ещё выполняется."));
             return;
         }
-        if (recoveryJournal.findUnfinished().isPresent()) {
+        try {
+            if (recoveryJournal.findUnfinished().isPresent()) {
+                store.publish(state.withOutputState(OutputSessionState.OUTPUT_ERROR,
+                        "Сначала восстановите конфигурацию экранов из незавершённой предыдущей сессии."));
+                return;
+            }
+        } catch (PersistenceException exception) {
+            LOG.error("Recovery journal cannot be read safely", exception);
             store.publish(state.withOutputState(OutputSessionState.OUTPUT_ERROR,
-                    "Сначала восстановите конфигурацию экранов из незавершённой предыдущей сессии."));
+                    "Не удалось безопасно прочитать журнал восстановления экранов. Обновите ScreenPilot или сохраните диагностику."));
             return;
         }
 
@@ -482,22 +588,25 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
                 activeTarget = findTarget(activeTarget);
             }
 
-            player = new MpvPlayerAdapter(findMpvExecutable(), processContainment(), mpvScreenCandidate);
+            player = new MpvPlayerAdapter(findMpvExecutable(), processContainment());
             LOG.info("Starting external output on target {} with mode {}", requestedTarget.friendlyName(), selectedModeLabel(state.selectedMode()));
             player.start().toCompletableFuture().get(START_TIMEOUT.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
             String title = player.windowTitle().orElseThrow(() -> new IOException("mpv did not expose its window title"));
-            if (!windowLocator.waitForWindowCenteredOn(title, activeTarget.bounds(), WINDOW_TIMEOUT)) {
+            long processId = player.processId().orElseThrow(() -> new IOException("mpv did not expose its process id"));
+            if (!windowLocator.placeAndVerifyWindowOn(title, processId, activeTarget.bounds(), WINDOW_TIMEOUT)) {
                 throw new IOException("mpv window was not placed on the selected external target");
             }
 
-            poller = createDisplayPoller(activeTarget);
-            PlayerNotifications notifications = new PlayerNotifications();
+            UUID outputSessionId = UUID.randomUUID();
+            poller = createDisplayPoller(activeTarget, outputSessionId, player);
+            PlayerNotifications notifications = new PlayerNotifications(outputSessionId);
             player.notifications().subscribe(notifications);
-            activeOutput = new ActiveOutput(player, poller, snapshot, record, activeTarget, notifications);
+            activeOutput = new ActiveOutput(outputSessionId, player, poller, snapshot, record, activeTarget, notifications);
             transition(OutputSessionEvent.DISPLAY_PREPARED, "Экран подготовлен. Открываю видео…");
             poller.start();
             player.load(media, state.requestedStartPosition()).toCompletableFuture()
                     .get(LOAD_TIMEOUT.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
+            activeOutput.setLoadedItem(state.selectedPlaylistItem().orElse(null));
             transition(OutputSessionEvent.FILE_LOADED, "Видео воспроизводится на выбранном внешнем экране.");
         } catch (Exception exception) {
             LOG.warn("External output start failed", exception);
@@ -526,7 +635,7 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
             store.publish(state.withUserMessage("Сначала подготовьте вывод на внешний экран."));
             return;
         }
-        if (!resumeDecisionAlreadyMade && requireResumeDecision(state, new PendingStart(null))) {
+        if (!resumeDecisionAlreadyMade && requireResumeDecision(state, PendingStart.forPlayback())) {
             return;
         }
         Path media = state.selectedMedia();
@@ -540,6 +649,7 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
             mediaProbe.cancelAll();
             output.player().load(media, state.requestedStartPosition()).toCompletableFuture()
                     .get(LOAD_TIMEOUT.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
+            output.setLoadedItem(state.selectedPlaylistItem().orElse(null));
             transition(OutputSessionEvent.FILE_LOADED, "Видео воспроизводится на выбранном внешнем экране.");
         } catch (Exception exception) {
             LOG.warn("Loading media into prepared output failed", exception);
@@ -549,36 +659,58 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
         }
     }
 
-    private WindowsDisplayPoller createDisplayPoller(DisplayInfo target) {
+    private WindowsDisplayPoller createDisplayPoller(
+            DisplayInfo target,
+            UUID outputSessionId,
+            MpvPlayerAdapter player
+    ) {
         return new WindowsDisplayPoller(new WindowsDisplayDiscovery(), new WindowsDisplayPoller.Listener() {
             @Override
             public void onTopologyChanged(ru.pavelkuzmin.screenpilot.domain.display.DisplayTopologyChanged event) {
                 boolean present = event.displays().stream()
                         .anyMatch(display -> display.targetAddress().equals(target.targetAddress()) && display.active());
                 if (!present) {
-                    serial.execute(() -> handleTargetLostOnSerial());
+                    requestEmergencyPlayerStop(outputSessionId, player);
+                    serial.execute(() -> handleTargetLostOnSerial(outputSessionId));
                 }
             }
 
             @Override
             public void onPollingFailure(IOException exception) {
-                serial.execute(() -> store.publish(store.current().withUserMessage(
-                        "Не удалось обновить состояние внешнего экрана. Остановите вывод.")));
+                serial.execute(() -> handlePollingFailureOnSerial(outputSessionId));
             }
         });
     }
 
-    private void handleTargetLostOnSerial() {
-        if (activeOutput == null) {
+    private void handlePollingFailureOnSerial(UUID outputSessionId) {
+        if (!isCurrentOutputSession(outputSessionId)) {
+            return;
+        }
+        store.publish(store.current().withUserMessage(
+                "Не удалось обновить состояние внешнего экрана. Остановите вывод."));
+    }
+
+    private void handleTargetLostOnSerial(UUID outputSessionId) {
+        if (!isCurrentOutputSession(outputSessionId)) {
+            return;
+        }
+        failActiveOutputOnSerial(outputSessionId, OutputSessionEvent.TARGET_LOST,
+                "Внешний экран отключён. Воспроизведение остановлено.");
+    }
+
+    private void requestEmergencyPlayerStop(UUID outputSessionId, MpvPlayerAdapter player) {
+        if (!emergencyStopRequests.add(outputSessionId)) {
             return;
         }
         try {
-            activeOutput.player().pause().toCompletableFuture().get(COMMAND_TIMEOUT.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
-        } catch (Exception ignored) {
-            // The target loss can cause mpv to close its IPC channel before pause arrives.
+            emergencyPlayerStop.execute(() -> player.shutdown().whenComplete((ignored, failure) -> {
+                if (failure != null) {
+                    LOG.warn("Emergency mpv stop failed for output session {}", outputSessionId, failure);
+                }
+            }));
+        } catch (java.util.concurrent.RejectedExecutionException exception) {
+            LOG.error("Emergency mpv stop could not be queued for output session {}", outputSessionId, exception);
         }
-        failActiveOutputOnSerial(OutputSessionEvent.TARGET_LOST,
-                "Внешний экран отключён. Воспроизведение остановлено.");
     }
 
     private void stopOutputOnSerial(String successMessage) {
@@ -586,45 +718,49 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
         if (output == null) {
             return;
         }
-        activeOutput = null;
+        if (store.current().outputState() == OutputSessionState.RESTORING_DISPLAY) {
+            return;
+        }
         LOG.info("Stopping external output and restoring the display snapshot");
         transition(OutputSessionEvent.STOP_OUTPUT_REQUESTED, "Восстанавливаю исходную конфигурацию экранов…");
-        persistResume(true);
-        closeQuietly(output.notifications());
-        closeQuietly(output.poller());
-        closeQuietly(output.player());
+        RuntimeException resumeFailure = persistResumeBestEffort(true);
+        Exception cleanupFailure = null;
+        cleanupFailure = closeAndAccumulate(output.notifications(), cleanupFailure);
+        cleanupFailure = closeAndAccumulate(output.poller(), cleanupFailure);
+        cleanupFailure = closeAndAccumulate(output.player(), cleanupFailure);
         try {
             displayMutator.restore(output.snapshot());
             recoveryJournal.markRestored(output.recoveryRecord().sessionId());
             List<DisplayInfo> displays = displayDiscovery.discover();
+            activeOutput = null;
             transition(OutputSessionEvent.RESTORE_SUCCEEDED, successMessage);
-            store.publish(store.current().withDisplays(displays).withUserMessage(successMessage));
+            if (cleanupFailure != null) {
+                LOG.warn("One or more output resource cleanup steps failed", cleanupFailure);
+            }
+            String message = cleanupFailure == null && resumeFailure == null
+                    ? successMessage
+                    : successMessage + " Некоторые вспомогательные операции завершились с ошибкой; подробности сохранены в журнале.";
+            store.publish(store.current().withDisplays(displays).withUserMessage(message));
         } catch (Exception exception) {
+            if (cleanupFailure != null) {
+                exception.addSuppressed(cleanupFailure);
+            }
+            if (resumeFailure != null) {
+                exception.addSuppressed(resumeFailure);
+            }
             LOG.error("Display restoration failed", exception);
             transition(OutputSessionEvent.RESTORE_FAILED,
                     "Не удалось полностью восстановить экраны. Откройте восстановление при следующем запуске.");
         }
     }
 
-    private void failActiveOutputOnSerial(OutputSessionEvent failure, String message) {
+    private void failActiveOutputOnSerial(UUID outputSessionId, OutputSessionEvent failure, String message) {
         ActiveOutput output = activeOutput;
-        if (output == null) {
+        if (output == null || !output.sessionId().equals(outputSessionId)) {
             return;
         }
-        activeOutput = null;
         transition(failure, message);
-        persistResume(true);
-        closeQuietly(output.notifications());
-        closeQuietly(output.poller());
-        closeQuietly(output.player());
-        try {
-            displayMutator.restore(output.snapshot());
-            recoveryJournal.markRestored(output.recoveryRecord().sessionId());
-            store.publish(store.current().withDisplays(displayDiscovery.discover()).withUserMessage(message));
-        } catch (Exception exception) {
-            store.publish(store.current().withOutputState(OutputSessionState.OUTPUT_ERROR,
-                    message + " Не удалось полностью восстановить экраны; восстановите их при следующем запуске."));
-        }
+        stopOutputOnSerial(message);
     }
 
     private void restoreAfterFailedStart(
@@ -697,7 +833,7 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
         if (offer == null) {
             return false;
         }
-        pendingStartAfterResumeChoice = pendingStart;
+        pendingStartAfterResumeChoice = pendingStart.awaiting(item, offer);
         store.publish(state.withPlaylist(state.playlist(), offer,
                 "Для выбранного видео сохранена позиция. Выберите, продолжить просмотр или начать с начала."));
         return true;
@@ -724,6 +860,24 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
         } catch (RuntimeException exception) {
             settings = AppSettings.defaults();
             store.publish(store.current().withUserMessage("Настройки повреждены. Загружены безопасные значения."));
+        }
+    }
+
+    private void loadPendingRecoveryOnSerial() {
+        RecoveryRecord record = readPendingRecovery();
+        if (record != null) {
+            store.publish(store.current().withPendingRecovery(record));
+        }
+    }
+
+    private RecoveryRecord readPendingRecovery() {
+        try {
+            return recoveryJournal.findUnfinished().orElse(null);
+        } catch (PersistenceException exception) {
+            LOG.error("Recovery journal cannot be read safely", exception);
+            store.publish(store.current().withOutputState(OutputSessionState.OUTPUT_ERROR,
+                    "Не удалось безопасно прочитать журнал восстановления экранов. Скопируйте диагностику."));
+            return null;
         }
     }
 
@@ -757,9 +911,20 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
         }
     }
 
+    private RuntimeException persistResumeBestEffort(boolean force) {
+        try {
+            persistResume(force);
+            return null;
+        } catch (RuntimeException exception) {
+            LOG.warn("Could not persist the playback resume position", exception);
+            return exception;
+        }
+    }
+
     private void persistResume(boolean force) {
         ApplicationState state = store.current();
-        PlaylistItem item = state.selectedPlaylistItem().orElse(null);
+        ActiveOutput output = activeOutput;
+        PlaylistItem item = output == null ? null : output.loadedItem(state.playlist());
         if (item == null || state.playback().duration().isEmpty()) {
             return;
         }
@@ -803,15 +968,19 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
         });
     }
 
-    private void handlePlayerNotificationOnSerial(PlayerNotification notification) {
-        if (activeOutput == null) {
+    private void handlePlayerNotificationOnSerial(UUID outputSessionId, PlayerNotification notification) {
+        if (!isCurrentOutputSession(outputSessionId)
+                || store.current().outputState() == OutputSessionState.RESTORING_DISPLAY) {
             return;
         }
         ApplicationState current = store.current();
         if (notification instanceof PlayerNotification.EndOfFile) {
             endOfFilePending = true;
-            store.current().selectedPlaylistItem().ifPresent(item -> resumeRepository.markCompleted(item.fingerprint()));
-            persistResume(true);
+            PlaylistItem playingItem = activeOutput.loadedItem(store.current().playlist());
+            if (playingItem != null) {
+                resumeRepository.markCompleted(playingItem.fingerprint());
+            }
+            persistResumeBestEffort(true);
             return;
         }
         if (notification instanceof PlayerNotification.StateChanged changed && changed.state() == PlayerState.IDLE) {
@@ -827,18 +996,18 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
         }
         store.publish(current.withPlayback(current.playback().withNotification(notification)));
         if (notification instanceof PlayerNotification.PlaybackProgress) {
-            persistResume(false);
+            persistResumeBestEffort(false);
         } else if (notification instanceof PlayerNotification.StateChanged changed && changed.state() == PlayerState.PAUSED) {
-            persistResume(true);
+            persistResumeBestEffort(true);
         } else if (notification instanceof PlayerNotification.MediaLoaded loaded) {
-            updateSelectedPlaylistMetadata(loaded.media());
+            updatePlaylistMetadata(loaded.media());
         }
         if (notification instanceof PlayerNotification.Diagnostic diagnostic) {
             LOG.warn("Player diagnostic {}: {}", diagnostic.code(), diagnostic.message());
             store.publish(store.current().withUserMessage(diagnostic.message()));
         } else if (notification instanceof PlayerNotification.Failure failure) {
             LOG.error("Player failure {}: {}", failure.code(), failure.message());
-            failActiveOutputOnSerial(OutputSessionEvent.OUTPUT_FAILED,
+            failActiveOutputOnSerial(activeOutput.sessionId(), OutputSessionEvent.OUTPUT_FAILED,
                     "Видеоплеер остановлен из-за ошибки: " + failure.message());
         }
         if (notification instanceof PlayerNotification.StateChanged changed && changed.state() == PlayerState.IDLE
@@ -848,9 +1017,13 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
         }
     }
 
-    private void updateSelectedPlaylistMetadata(MediaInfo mediaInfo) {
-        PlaylistItem item = store.current().selectedPlaylistItem().orElse(null);
-        if (item != null && item.source().equals(mediaInfo.source())) {
+    private void updatePlaylistMetadata(MediaInfo mediaInfo) {
+        PlaylistItem item = store.current().playlist().items().stream()
+                .filter(candidate -> candidate.source().equals(mediaInfo.source()))
+                .findFirst()
+                .orElse(null);
+        if (item != null) {
+            activeOutput.setLoadedItem(item);
             store.publish(store.current().withProbedPlaylistItem(item.withMediaInfo(mediaInfo)));
         }
     }
@@ -870,7 +1043,7 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
         }
         if (state.outputState() == OutputSessionState.OUTPUT_ACTIVE) {
             try {
-                persistResume(true);
+                persistResumeBestEffort(true);
                 suppressNextIdleTransition = true;
                 activeOutput.player().stop().toCompletableFuture()
                         .get(COMMAND_TIMEOUT.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
@@ -911,7 +1084,7 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
         if (activeOutput == null || state.outputState() != OutputSessionState.OUTPUT_IDLE || state.selectedMedia() == null) {
             return;
         }
-        if (!resumeDecisionAlreadyMade && requireResumeDecision(state, new PendingStart(null))) {
+        if (!resumeDecisionAlreadyMade && requireResumeDecision(state, PendingStart.forPlayback())) {
             return;
         }
         try {
@@ -938,6 +1111,18 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
                 || state == OutputSessionState.RESTORING_DISPLAY;
     }
 
+    private boolean playlistEditingBlocked() {
+        OutputSessionState state = store.current().outputState();
+        return state == OutputSessionState.PREPARING_DISPLAY
+                || state == OutputSessionState.OUTPUT_ACTIVE
+                || state == OutputSessionState.RESTORING_DISPLAY
+                || (state == OutputSessionState.OUTPUT_ERROR && activeOutput != null);
+    }
+
+    private boolean isCurrentOutputSession(UUID outputSessionId) {
+        return activeOutput != null && activeOutput.sessionId().equals(outputSessionId);
+    }
+
     private DisplayInfo findTarget(DisplayInfo target) throws IOException {
         return displayDiscovery.discover().stream()
                 .filter(display -> display.targetAddress().equals(target.targetAddress()))
@@ -954,6 +1139,22 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
             resource.close();
         } catch (Exception ignored) {
             // A later recovery attempt still has the persisted journal.
+        }
+    }
+
+    private static Exception closeAndAccumulate(AutoCloseable resource, Exception previousFailure) {
+        if (resource == null) {
+            return previousFailure;
+        }
+        try {
+            resource.close();
+            return previousFailure;
+        } catch (Exception exception) {
+            if (previousFailure == null) {
+                return exception;
+            }
+            previousFailure.addSuppressed(exception);
+            return previousFailure;
         }
     }
 
@@ -984,8 +1185,12 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
         return ApplicationPaths.findMpvExecutable(ScreenPilotApplicationService.class);
     }
 
-    private static Path applicationDataDirectory() {
-        return ApplicationPaths.applicationDataDirectory();
+    private static Path settingsDirectory() {
+        return ApplicationPaths.settingsDirectory();
+    }
+
+    private static Path localDataDirectory() {
+        return ApplicationPaths.localDataDirectory();
     }
 
     private static String selectedModeLabel(DisplayMode mode) {
@@ -1012,28 +1217,107 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
         }
     }
 
-    private record ActiveOutput(
-            MpvPlayerAdapter player,
-            WindowsDisplayPoller poller,
-            WindowsDisplaySnapshot snapshot,
-            RecoveryRecord recoveryRecord,
-            DisplayInfo target,
-            PlayerNotifications notifications
-    ) {
+    private static final class ActiveOutput {
+
+        private final UUID sessionId;
+        private final MpvPlayerAdapter player;
+        private final WindowsDisplayPoller poller;
+        private final WindowsDisplaySnapshot snapshot;
+        private final RecoveryRecord recoveryRecord;
+        private final DisplayInfo target;
+        private final PlayerNotifications notifications;
+        private MediaFingerprint loadedFingerprint;
+
+        private ActiveOutput(
+                UUID sessionId,
+                MpvPlayerAdapter player,
+                WindowsDisplayPoller poller,
+                WindowsDisplaySnapshot snapshot,
+                RecoveryRecord recoveryRecord,
+                DisplayInfo target,
+                PlayerNotifications notifications
+        ) {
+            this.sessionId = Objects.requireNonNull(sessionId, "sessionId");
+            this.player = Objects.requireNonNull(player, "player");
+            this.poller = Objects.requireNonNull(poller, "poller");
+            this.snapshot = Objects.requireNonNull(snapshot, "snapshot");
+            this.recoveryRecord = Objects.requireNonNull(recoveryRecord, "recoveryRecord");
+            this.target = Objects.requireNonNull(target, "target");
+            this.notifications = Objects.requireNonNull(notifications, "notifications");
+        }
+
+        UUID sessionId() {
+            return sessionId;
+        }
+
+        MpvPlayerAdapter player() {
+            return player;
+        }
+
+        WindowsDisplayPoller poller() {
+            return poller;
+        }
+
+        WindowsDisplaySnapshot snapshot() {
+            return snapshot;
+        }
+
+        RecoveryRecord recoveryRecord() {
+            return recoveryRecord;
+        }
+
+        DisplayInfo target() {
+            return target;
+        }
+
+        PlayerNotifications notifications() {
+            return notifications;
+        }
+
+        void setLoadedItem(PlaylistItem item) {
+            loadedFingerprint = item == null ? null : item.fingerprint();
+        }
+
+        PlaylistItem loadedItem(Playlist playlist) {
+            if (loadedFingerprint == null) {
+                return null;
+            }
+            return playlist.items().stream()
+                    .filter(item -> item.fingerprint().equals(loadedFingerprint))
+                    .findFirst()
+                    .orElse(null);
+        }
     }
 
-    /** {@code null} screen means loading media into an already prepared black output window. */
-    private record PendingStart(Integer mpvScreenCandidate) {
-        private PendingStart {
-            if (mpvScreenCandidate != null && mpvScreenCandidate < 0) {
-                throw new IllegalArgumentException("mpv screen candidate must be non-negative");
-            }
+    /** Records whether a resume decision must begin a new output session or load its prepared window. */
+    private record PendingStart(boolean startsOutput, MediaFingerprint fingerprint, ResumeEntry offer) {
+        static PendingStart forOutput() {
+            return new PendingStart(true, null, null);
+        }
+
+        static PendingStart forPlayback() {
+            return new PendingStart(false, null, null);
+        }
+
+        PendingStart awaiting(PlaylistItem item, ResumeEntry resumeOffer) {
+            return new PendingStart(startsOutput, item.fingerprint(), resumeOffer);
+        }
+
+        boolean matches(PlaylistItem item, ResumeEntry currentOffer) {
+            return fingerprint != null && offer != null
+                    && fingerprint.equals(item.fingerprint())
+                    && offer.equals(currentOffer);
         }
     }
 
     private final class PlayerNotifications implements Flow.Subscriber<PlayerNotification>, AutoCloseable {
 
+        private final UUID outputSessionId;
         private Flow.Subscription subscription;
+
+        private PlayerNotifications(UUID outputSessionId) {
+            this.outputSessionId = Objects.requireNonNull(outputSessionId, "outputSessionId");
+        }
 
         @Override
         public void onSubscribe(Flow.Subscription nextSubscription) {
@@ -1043,12 +1327,12 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
 
         @Override
         public void onNext(PlayerNotification notification) {
-            serial.execute(() -> handlePlayerNotificationOnSerial(notification));
+            serial.execute(() -> handlePlayerNotificationOnSerial(outputSessionId, notification));
         }
 
         @Override
         public void onError(Throwable throwable) {
-            serial.execute(() -> failActiveOutputOnSerial(OutputSessionEvent.OUTPUT_FAILED,
+            serial.execute(() -> failActiveOutputOnSerial(outputSessionId, OutputSessionEvent.OUTPUT_FAILED,
                     "Канал управления видеоплеером завершился с ошибкой."));
         }
 
@@ -1073,6 +1357,15 @@ public final class ScreenPilotApplicationService implements AutoCloseable {
     private static ExecutorService newApplicationSerialExecutor() {
         ThreadFactory factory = runnable -> {
             Thread thread = new Thread(runnable, "application-serial");
+            thread.setDaemon(true);
+            return thread;
+        };
+        return Executors.newSingleThreadExecutor(factory);
+    }
+
+    private static ExecutorService newEmergencyPlayerStopExecutor() {
+        ThreadFactory factory = runnable -> {
+            Thread thread = new Thread(runnable, "screenpilot-emergency-player-stop");
             thread.setDaemon(true);
             return thread;
         };

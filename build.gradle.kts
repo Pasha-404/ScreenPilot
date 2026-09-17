@@ -5,7 +5,20 @@ plugins {
 }
 
 group = "ru.pavelkuzmin.screenpilot"
-version = "0.1.0"
+version = providers.gradleProperty("version").get()
+
+val semanticVersion = Regex("^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$")
+
+val verifyReleaseVersion = tasks.register("verifyReleaseVersion") {
+    group = "verification"
+    description = "Rejects a release version that is not MAJOR.MINOR.PATCH."
+    inputs.property("version", rootProject.version.toString())
+    doLast {
+        check(semanticVersion.matches(rootProject.version.toString())) {
+            "ScreenPilot version must use MAJOR.MINOR.PATCH SemVer, got: ${rootProject.version}"
+        }
+    }
+}
 
 allprojects {
     repositories {
@@ -33,5 +46,20 @@ tasks.register("integrationTest") {
         ":screenpilot-platform-windows:integrationTest",
         ":screenpilot-persistence:integrationTest",
         ":screenpilot-app:integrationTest",
+    )
+}
+
+tasks.register("buildWindowsInstaller") {
+    group = "distribution"
+    description = "Runs all tests and creates the AppFleet-compatible Windows release assets."
+    dependsOn(
+        verifyReleaseVersion,
+        ":screenpilot-domain:test",
+        ":screenpilot-player-mpv:test",
+        ":screenpilot-platform-windows:test",
+        ":screenpilot-persistence:test",
+        ":screenpilot-app:test",
+        "integrationTest",
+        ":screenpilot-app:verifyReleaseAssets",
     )
 }

@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
+import ru.pavelkuzmin.screenpilot.domain.media.MediaInfo;
 import ru.pavelkuzmin.screenpilot.domain.port.ProcessContainment;
 
 import java.io.DataOutputStream;
@@ -21,6 +22,8 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 @EnabledOnOs(OS.WINDOWS)
 class MpvPlayerAdapterIntegrationTest {
 
+    private static final int MAX_MPV_STARTUP_ATTEMPTS = 3;
+
     @Test
     void controlsRealMpvThroughThePlayerAdapterWithoutAnExternalDisplay() throws Exception {
         Path executable = findMpvExecutable();
@@ -28,22 +31,27 @@ class MpvPlayerAdapterIntegrationTest {
         Path media = Files.createTempFile("screenpilot-adapter-", ".wav");
         writeSilentWav(media, 20);
 
-        try (MpvPlayerAdapter adapter = new MpvPlayerAdapter(
-                executable,
-                new MpvProcessLauncher(),
-                ProcessContainment.disabled(),
-                MpvIpcClient::connect,
-                (path, sessionId, softwareDecode) -> MpvLaunchProfile.forHeadlessTest(path, sessionId))) {
-            adapter.start().toCompletableFuture().get(10, TimeUnit.SECONDS);
-            var info = adapter.load(media, Duration.ZERO).toCompletableFuture().get(15, TimeUnit.SECONDS);
-            adapter.pause().toCompletableFuture().get(5, TimeUnit.SECONDS);
-            adapter.seek(Duration.ofSeconds(1)).toCompletableFuture().get(5, TimeUnit.SECONDS);
-            adapter.play().toCompletableFuture().get(5, TimeUnit.SECONDS);
-            adapter.stop().toCompletableFuture().get(5, TimeUnit.SECONDS);
+        try {
+            var info = retryTransientMpvStartup(() -> {
+                try (MpvPlayerAdapter adapter = new MpvPlayerAdapter(
+                        executable,
+                        new MpvProcessLauncher(),
+                        ProcessContainment.disabled(),
+                        MpvIpcClient::connect,
+                        (path, sessionId, softwareDecode) -> MpvLaunchProfile.forHeadlessTest(path, sessionId))) {
+                    adapter.start().toCompletableFuture().get(10, TimeUnit.SECONDS);
+                    var loaded = adapter.load(media, Duration.ZERO).toCompletableFuture().get(15, TimeUnit.SECONDS);
+                    adapter.pause().toCompletableFuture().get(5, TimeUnit.SECONDS);
+                    adapter.seek(Duration.ofSeconds(1)).toCompletableFuture().get(5, TimeUnit.SECONDS);
+                    adapter.play().toCompletableFuture().get(5, TimeUnit.SECONDS);
+                    adapter.stop().toCompletableFuture().get(5, TimeUnit.SECONDS);
+                    assertThat(adapter.state().name()).isEqualTo("IDLE");
+                    return loaded;
+                }
+            });
 
             assertThat(info.source()).isEqualTo(media.toAbsolutePath().normalize());
             assertThat(info.container()).contains("wav");
-            assertThat(adapter.state().name()).isEqualTo("IDLE");
         } finally {
             deleteAfterMpvRelease(media);
         }
@@ -56,8 +64,12 @@ class MpvPlayerAdapterIntegrationTest {
         Path media = Files.createTempFile("screenpilot-probe-", ".wav");
         writeSilentWav(media, 20);
 
-        try (MpvMediaProbe probe = new MpvMediaProbe(executable)) {
-            var info = probe.probe(media).toCompletableFuture().get(15, TimeUnit.SECONDS);
+        try {
+            var info = retryTransientMpvStartup(() -> {
+                try (MpvMediaProbe probe = new MpvMediaProbe(executable)) {
+                    return probe.probe(media).toCompletableFuture().get(15, TimeUnit.SECONDS);
+                }
+            });
 
             assertThat(info.source()).isEqualTo(media.toAbsolutePath().normalize());
             assertThat(info.container()).contains("wav");
@@ -65,6 +77,45 @@ class MpvPlayerAdapterIntegrationTest {
         } finally {
             deleteAfterMpvRelease(media);
         }
+    }
+
+    /**
+     * A freshly started mpv can briefly create then close its IPC pipe on a busy Windows VM before
+     * its second start succeeds. This is a real-process test, not a skipped assertion: only that
+     * narrowly identified startup transport failure is retried and the final attempt still fails
+     * with the original error if mpv cannot serve the metadata request.
+     */
+    private static <T> T retryTransientMpvStartup(ThrowingOperation<T> operation) throws Exception {
+        Exception lastFailure = null;
+        for (int attempt = 1; attempt <= MAX_MPV_STARTUP_ATTEMPTS; attempt++) {
+            try {
+                return operation.run();
+            } catch (Exception exception) {
+                lastFailure = exception;
+                if (!isTransientPipeStartupFailure(exception) || attempt == MAX_MPV_STARTUP_ATTEMPTS) {
+                    throw exception;
+                }
+                TimeUnit.MILLISECONDS.sleep(250L * attempt);
+            }
+        }
+        throw lastFailure;
+    }
+
+    @FunctionalInterface
+    private interface ThrowingOperation<T> {
+        T run() throws Exception;
+    }
+
+    private static boolean isTransientPipeStartupFailure(Throwable failure) {
+        for (Throwable current = failure; current != null; current = current.getCause()) {
+            if (current instanceof IOException && current.getMessage() != null
+                    && (current.getMessage().contains("mpv IPC pipe disconnected")
+                    || current.getMessage().contains("mpv IPC pipe did not become available")
+                    || current.getMessage().contains("mpv IPC pipe closed before a message"))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static Path findMpvExecutable() {

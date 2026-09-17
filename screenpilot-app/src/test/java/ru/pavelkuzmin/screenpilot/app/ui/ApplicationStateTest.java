@@ -13,12 +13,14 @@ import ru.pavelkuzmin.screenpilot.domain.media.MediaFingerprint;
 import ru.pavelkuzmin.screenpilot.domain.media.Playlist;
 import ru.pavelkuzmin.screenpilot.domain.media.PlaylistItem;
 import ru.pavelkuzmin.screenpilot.domain.media.ResumeEntry;
+import ru.pavelkuzmin.screenpilot.domain.recovery.RecoveryRecord;
 import ru.pavelkuzmin.screenpilot.domain.session.OutputSessionState;
 
 import java.nio.file.Path;
 import java.util.List;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -93,6 +95,24 @@ class ApplicationStateTest {
         assertThat(awaitingChoice.withResumeDecision(true).requestedStartPosition()).isEqualTo(Duration.ofMinutes(4));
         assertThat(awaitingChoice.withResumeDecision(false).requestedStartPosition()).isZero();
         assertThat(awaitingChoice.withResumeDecision(true).readyForOutput()).isTrue();
+    }
+
+    @Test
+    void blocksOutputUntilTheUserExplicitlyResolvesAnUnfinishedDisplayRecovery() {
+        DisplayInfo hdmi = display("hdmi", false, true, ConnectionType.HDMI);
+        RecoveryRecord recovery = RecoveryRecord.begin(UUID.randomUUID(), Instant.parse("2026-09-17T10:00:00Z"),
+                "saved-display-topology");
+
+        ApplicationState state = ApplicationState.initial()
+                .withDisplays(List.of(hdmi))
+                .withSelectedMedia(Path.of("C:/Video/movie.mkv"))
+                .withPendingRecovery(recovery)
+                .withDisplays(List.of(hdmi));
+
+        assertThat(state.pendingRecovery()).isEqualTo(recovery);
+        assertThat(state.readyForOutput()).isFalse();
+        assertThat(state.outputState()).isEqualTo(OutputSessionState.OUTPUT_ERROR);
+        assertThat(state.withoutPendingRecovery("Пользователь оставил текущую конфигурацию.").readyForOutput()).isTrue();
     }
 
     private static DisplayInfo display(String id, boolean internal, boolean active, ConnectionType connection) {

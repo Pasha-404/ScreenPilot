@@ -1,6 +1,7 @@
 package ru.pavelkuzmin.screenpilot.persistence;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import ru.pavelkuzmin.screenpilot.domain.media.MediaFingerprint;
 import ru.pavelkuzmin.screenpilot.domain.media.ResumeEntry;
 import ru.pavelkuzmin.screenpilot.domain.port.ResumeRepository;
@@ -64,11 +65,12 @@ public final class JsonResumeRepository implements ResumeRepository {
             return ResumeStore.empty();
         }
         try {
-            ResumeStore store = mapper.readValue(resumeFile.toFile(), ResumeStore.class);
-            if (store.schemaVersion() > SCHEMA_VERSION) {
-                throw new UnsupportedSchemaException(resumeFile.getFileName().toString(), store.schemaVersion(), SCHEMA_VERSION);
+            JsonNode envelope = mapper.readTree(resumeFile.toFile());
+            int schemaVersion = envelope.path("schemaVersion").asInt(0);
+            if (schemaVersion > SCHEMA_VERSION) {
+                throw new UnsupportedSchemaException(resumeFile.getFileName().toString(), schemaVersion, SCHEMA_VERSION);
             }
-            return store;
+            return mapper.treeToValue(envelope, ResumeStore.class);
         } catch (UnsupportedSchemaException exception) {
             throw exception;
         } catch (IOException | IllegalArgumentException exception) {

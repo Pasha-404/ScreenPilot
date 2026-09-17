@@ -372,11 +372,7 @@ final class DisplayMutationSmokeMain {
     }
 
     private static Path applicationDataDirectory() {
-        String localAppData = System.getenv("LOCALAPPDATA");
-        if (localAppData != null && !localAppData.isBlank()) {
-            return Path.of(localAppData).resolve("ScreenPilot");
-        }
-        return Path.of(System.getProperty("user.home"), "AppData", "Local", "ScreenPilot");
+        return ApplicationPaths.localDataDirectory();
     }
 
     private static String formatMode(DisplayMode mode) {

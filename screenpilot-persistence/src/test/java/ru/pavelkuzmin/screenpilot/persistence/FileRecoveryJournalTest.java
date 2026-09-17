@@ -50,6 +50,24 @@ class FileRecoveryJournalTest {
     }
 
     @Test
+    void preservesAnUnknownFutureRecoverySchemaWithoutTreatingItAsCorruption() throws Exception {
+        Path activeFile = temporaryDirectory.resolve(Path.of("recovery", "display-session.json"));
+        Files.createDirectories(activeFile.getParent());
+        String futureJson = """
+                {"schemaVersion":2,"futureField":"must-survive","sessionId":"00000000-0000-0000-0000-000000000000"}
+                """;
+        Files.writeString(activeFile, futureJson);
+
+        assertThatThrownBy(() -> new FileRecoveryJournal(temporaryDirectory).findUnfinished())
+                .isInstanceOf(UnsupportedSchemaException.class);
+
+        assertThat(Files.readString(activeFile)).isEqualTo(futureJson);
+        try (Stream<Path> files = Files.list(activeFile.getParent())) {
+            assertThat(files.noneMatch(path -> path.getFileName().toString().contains(".corrupt-"))).isTrue();
+        }
+    }
+
+    @Test
     void archivesAndClosesWhenUserKeepsTheCurrentConfiguration() {
         FileRecoveryJournal journal = new FileRecoveryJournal(temporaryDirectory);
         RecoveryRecord record = RecoveryRecord.begin(UUID.randomUUID(), Instant.now(), "captured-display-topology");

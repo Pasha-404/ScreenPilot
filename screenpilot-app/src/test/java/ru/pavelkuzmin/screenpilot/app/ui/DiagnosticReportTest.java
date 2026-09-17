@@ -18,6 +18,21 @@ class DiagnosticReportTest {
         assertThat(report).contains("PLY-003", "Последние строки лога");
         assertThat(report).doesNotContain("C:\\Users\\Pavel", "C:\\Video\\private.mkv");
         assertThat(report).contains("<локальный-путь>");
+        assertThat(report).doesNotContain("Users", "Pavel", "Videos", "private.mkv");
+    }
+
+    @Test
+    void redactsUncPathsPathsWithSpacesAndJsonEscapedWindowsPaths() {
+        String rawPath = DiagnosticReport.redact("PLY-003 C:\\Users\\Synthetic Person\\Private Videos\\movie.mkv reason");
+        String uncPath = DiagnosticReport.redact("PLY-003 \\\\server\\private-share\\movie.mkv reason");
+        String escapedPath = DiagnosticReport.redact("{\\\"path\\\":\\\"C:\\\\\\\\Users\\\\SyntheticPerson\\\\secret.mkv\\\"}");
+
+        assertThat(rawPath).contains("PLY-003", "<локальный-путь>")
+                .doesNotContain("Synthetic", "Private", "movie.mkv");
+        assertThat(uncPath).contains("PLY-003", "<локальный-путь>")
+                .doesNotContain("server", "private-share", "movie.mkv");
+        assertThat(escapedPath).contains("<локальный-путь>")
+                .doesNotContain("SyntheticPerson", "secret.mkv");
     }
 
     @Test

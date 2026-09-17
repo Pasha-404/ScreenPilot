@@ -1,5 +1,6 @@
 package ru.pavelkuzmin.screenpilot.app;
 
+import java.io.IOException;
 import java.util.Arrays;
 
 /** Entry point for the technical Stage 1 tools. JavaFX is intentionally not started before the mpv gate passes. */
@@ -9,6 +10,13 @@ public final class BootstrapMain {
     }
 
     public static void main(String[] args) {
+        try {
+            ApplicationPaths.prepareUserDataDirectories();
+        } catch (IOException exception) {
+            System.err.println("ScreenPilot could not prepare its user data directories: " + exception.getMessage());
+            System.exit(1);
+            return;
+        }
         ApplicationPaths.configureLogging();
         if (args.length == 0) {
             ru.pavelkuzmin.screenpilot.app.ui.ScreenPilotApplication.launchApplication(args);
@@ -19,9 +27,6 @@ public final class BootstrapMain {
             return;
         }
         if (args.length > 0 && "display-probe".equals(args[0])) {
-            if (DisplayMutationSmokeMain.reportPendingRecovery()) {
-                System.exit(2);
-            }
             System.exit(DisplayTopologyProbeMain.run());
         }
         if (args.length > 0 && "display-poll-smoke".equals(args[0])) {

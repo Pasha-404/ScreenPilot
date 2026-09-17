@@ -8,27 +8,43 @@ import java.nio.file.Path;
 /** Stable user-writable locations and runtime resource lookup for both Gradle and jpackage starts. */
 public final class ApplicationPaths {
 
-    private static final String APPLICATION_NAME = "ScreenPilot";
     private static final String LOG_DIRECTORY_PROPERTY = "screenpilot.log.directory";
 
     private ApplicationPaths() {
     }
 
+    /** User settings and resume data, safe to retain across application updates. */
+    public static Path settingsDirectory() {
+        return currentDirectories().settingsDirectory();
+    }
+
+    /** Logs, recovery journals and the single-instance lock, local to this Windows profile. */
+    public static Path localDataDirectory() {
+        return currentDirectories().localDirectory();
+    }
+
+    /**
+     * Compatibility alias for technical callers that need local, non-roaming data.
+     * New production code should name the intended location explicitly.
+     */
     public static Path applicationDataDirectory() {
-        String localAppData = System.getenv("LOCALAPPDATA");
-        return localAppData == null || localAppData.isBlank()
-                ? Path.of(System.getProperty("user.home"), "AppData", "Local", APPLICATION_NAME)
-                : Path.of(localAppData).resolve(APPLICATION_NAME);
+        return localDataDirectory();
     }
 
     public static Path logDirectory() {
-        return applicationDataDirectory().resolve("logs");
+        return localDataDirectory().resolve("logs");
+    }
+
+    /** Creates standard directories and makes a non-destructive copy from the pre-AppFleet layout. */
+    public static void prepareUserDataDirectories() throws IOException {
+        currentDirectories().prepareAndMigrateLegacyData();
     }
 
     /** Configures Logback before application classes create their first logger. */
     public static void configureLogging() {
         Path directory = logDirectory();
         try {
+            prepareUserDataDirectories();
             Files.createDirectories(directory);
         } catch (IOException ignored) {
             // Logging must not make the player unusable; Logback falls back to its configured default path.
@@ -62,5 +78,9 @@ public final class ApplicationPaths {
             }
         }
         return Path.of("vendor", "mpv", "runtime", "mpv.exe").toAbsolutePath().normalize();
+    }
+
+    private static UserDataDirectories currentDirectories() {
+        return UserDataDirectories.fromEnvironment(System.getenv(), Path.of(System.getProperty("user.home")));
     }
 }

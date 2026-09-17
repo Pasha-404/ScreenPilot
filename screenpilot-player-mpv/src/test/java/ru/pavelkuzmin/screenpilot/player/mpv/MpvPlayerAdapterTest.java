@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class MpvPlayerAdapterTest {
 
@@ -70,6 +71,40 @@ class MpvPlayerAdapterTest {
     }
 
     @Test
+    void completesTheOriginalLoadWhenDecoderFallbackHappensBeforeTheFirstFileLoadedEvent() throws Exception {
+        Path media = Files.createTempFile("screenpilot-player-", ".wav");
+        try {
+            AtomicInteger starts = new AtomicInteger();
+            List<FakeIpcSession> sessions = new ArrayList<>();
+            MpvProcessStarter starter = profile -> {
+                starts.incrementAndGet();
+                return new FakeProcess();
+            };
+            MpvIpcConnector connector = (pipe, timeout) -> {
+                FakeIpcSession session = new FakeIpcSession();
+                sessions.add(session);
+                return session;
+            };
+
+            try (MpvPlayerAdapter adapter = new MpvPlayerAdapter(
+                    Path.of("vendor/mpv/runtime/mpv.exe"), starter, ProcessContainment.disabled(), connector,
+                    MpvLaunchProfile::forPlayer)) {
+                adapter.start().toCompletableFuture().get(2, TimeUnit.SECONDS);
+                var originalLoad = adapter.load(media, Duration.ZERO).toCompletableFuture();
+
+                sessions.getFirst().emitLog("warn", "hwdec failed to initialize");
+                await(() -> starts.get() == 2);
+                sessions.get(1).emit("file-loaded", event -> { });
+
+                assertThat(originalLoad.get(2, TimeUnit.SECONDS).source()).isEqualTo(media.toAbsolutePath().normalize());
+                assertThat(adapter.state()).isEqualTo(PlayerState.PLAYING);
+            }
+        } finally {
+            Files.deleteIfExists(media);
+        }
+    }
+
+    @Test
     void explicitlyUnpausesEachNewFileAfterThePlayerReturnsToIdle() throws Exception {
         Path media = Files.createTempFile("screenpilot-player-", ".wav");
         try {
@@ -96,6 +131,24 @@ class MpvPlayerAdapterTest {
             }
         } finally {
             Files.deleteIfExists(media);
+        }
+    }
+
+    @Test
+    void refusesToContinueWhenRequiredProcessContainmentCannotBeAttached() {
+        FakeProcess process = new FakeProcess();
+        ProcessContainment failingContainment = ignored -> {
+            throw new IOException("Job Object access denied");
+        };
+
+        try (MpvPlayerAdapter adapter = new MpvPlayerAdapter(
+                Path.of("vendor/mpv/runtime/mpv.exe"), profile -> process, failingContainment,
+                (pipe, timeout) -> {
+                    throw new AssertionError("IPC must not be opened for an uncontained output process");
+                }, MpvLaunchProfile::forPlayer)) {
+            assertThatThrownBy(() -> adapter.start().toCompletableFuture().get(2, TimeUnit.SECONDS))
+                    .hasMessageContaining("PLY-001");
+            assertThat(process.isAlive()).isFalse();
         }
     }
 

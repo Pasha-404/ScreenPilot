@@ -46,6 +46,7 @@ public final class OutputSessionStateMachine {
             case OUTPUT_ERROR -> switch (event) {
                 case TARGET_SELECTED -> OutputSessionState.TARGET_READY;
                 case TARGET_LOST -> OutputSessionState.NO_TARGET;
+                case STOP_OUTPUT_REQUESTED -> OutputSessionState.RESTORING_DISPLAY;
                 default -> invalid(state, event);
             };
         };

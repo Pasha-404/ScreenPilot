@@ -69,7 +69,7 @@ public final class WindowsDisplayDiscovery {
         for (DisplayConfigPathInfo path : paths) {
             boolean active = (path.flags & DISPLAYCONFIG_PATH_ACTIVE) != 0;
             String sourceName = active ? querySourceName(path.sourceInfo) : "";
-            GdiDisplay gdiDisplay = active ? findGdiDisplay(sourceName, path.sourceInfo, gdiDisplays) : null;
+            GdiDisplay gdiDisplay = active ? findGdiDisplay(sourceName, gdiDisplays) : null;
             String gdiDeviceName = gdiDisplay == null ? sourceName : gdiDisplay.deviceName();
             GdiMappingConfidence gdiMappingConfidence = !sourceName.isBlank()
                     ? GdiMappingConfidence.AUTHORITATIVE
@@ -79,7 +79,7 @@ public final class WindowsDisplayDiscovery {
             DisplayMode preferredMode = queryPreferredMode(path.targetInfo);
             List<DisplayMode> confirmedModes = active ? listConfirmedModes(gdiDeviceName) : List.of();
             int outputTechnology = targetName == null ? path.targetInfo.outputTechnology : targetName.outputTechnology;
-            boolean internal = outputTechnology == OutputTechnology.INTERNAL;
+            boolean internal = isInternalOutputTechnology(outputTechnology);
             String monitorPath = targetName == null ? "" : nativeString(targetName.monitorDevicePath);
             short manufacturerId = targetName == null ? 0 : targetName.edidManufactureId;
             short productCodeId = targetName == null ? 0 : targetName.edidProductCodeId;
@@ -209,11 +209,7 @@ public final class WindowsDisplayDiscovery {
         return displays;
     }
 
-    private static GdiDisplay findGdiDisplay(
-            String sourceName,
-            DisplayConfigPathSourceInfo source,
-            List<GdiDisplay> gdiDisplays
-    ) {
+    private static GdiDisplay findGdiDisplay(String sourceName, List<GdiDisplay> gdiDisplays) {
         if (!sourceName.isBlank()) {
             for (GdiDisplay display : gdiDisplays) {
                 if (sourceName.equalsIgnoreCase(display.deviceName())) {
@@ -221,16 +217,8 @@ public final class WindowsDisplayDiscovery {
                 }
             }
         }
-        // A few WDDM drivers reject GET_SOURCE_NAME. Use an ordinal fallback only for an
-        // attached display and only as a best-effort association until the driver can provide metadata.
-        // Only use the ordinal fallback for an attached GDI display; otherwise leave the mapping absent.
-        long sourceId = Integer.toUnsignedLong(source.id);
-        if (sourceId < gdiDisplays.size()) {
-            GdiDisplay candidate = gdiDisplays.get((int) sourceId);
-            if (candidate.attachedToDesktop()) {
-                return candidate;
-            }
-        }
+        // DISPLAYCONFIG source IDs are local to an adapter and are not an index into EnumDisplayDevices.
+        // A missing GET_SOURCE_NAME result therefore remains unavailable rather than being guessed.
         return null;
     }
 
@@ -340,15 +328,16 @@ public final class WindowsDisplayDiscovery {
             return null;
         }
         packet.read();
-        if (packet.width == 0 || packet.height == 0 || packet.targetRefreshRate.denominator == 0) {
+        DisplayConfigVideoSignalInfo videoSignal = packet.targetMode.targetVideoSignalInfo;
+        if (packet.width == 0 || packet.height == 0 || videoSignal.vSyncFreq.denominator == 0) {
             return null;
         }
         return new DisplayMode(
                 packet.width,
                 packet.height,
-                RefreshRate.of(Integer.toUnsignedLong(packet.targetRefreshRate.numerator),
-                        Integer.toUnsignedLong(packet.targetRefreshRate.denominator)),
-                packet.scanLineOrdering != 1,
+                RefreshRate.of(Integer.toUnsignedLong(videoSignal.vSyncFreq.numerator),
+                        Integer.toUnsignedLong(videoSignal.vSyncFreq.denominator)),
+                videoSignal.scanLineOrdering != 1,
                 32,
                 true
         );
@@ -474,13 +463,26 @@ public final class WindowsDisplayDiscovery {
 
     static ConnectionType connectionType(int outputTechnology) {
         return switch (outputTechnology) {
-            case OutputTechnology.INTERNAL -> ConnectionType.INTERNAL;
+            case OutputTechnology.INTERNAL,
+                    OutputTechnology.LVDS,
+                    OutputTechnology.DISPLAYPORT_EMBEDDED,
+                    OutputTechnology.UDI_EMBEDDED -> ConnectionType.INTERNAL;
             case OutputTechnology.HDMI -> ConnectionType.HDMI;
-            case OutputTechnology.DISPLAYPORT_EXTERNAL, OutputTechnology.DISPLAYPORT_EMBEDDED -> ConnectionType.DISPLAY_PORT;
+            case OutputTechnology.DISPLAYPORT_EXTERNAL -> ConnectionType.DISPLAY_PORT;
             case OutputTechnology.DVI -> ConnectionType.DVI;
-            case OutputTechnology.LVDS, OutputTechnology.UDI_EXTERNAL, OutputTechnology.UDI_EMBEDDED -> ConnectionType.USB_C_OR_ADAPTER;
+            case OutputTechnology.UDI_EXTERNAL -> ConnectionType.USB_C_OR_ADAPTER;
             case OutputTechnology.OTHER -> ConnectionType.OTHER;
             default -> ConnectionType.UNKNOWN;
+        };
+    }
+
+    static boolean isInternalOutputTechnology(int outputTechnology) {
+        return switch (outputTechnology) {
+            case OutputTechnology.INTERNAL,
+                    OutputTechnology.LVDS,
+                    OutputTechnology.DISPLAYPORT_EMBEDDED,
+                    OutputTechnology.UDI_EMBEDDED -> true;
+            default -> false;
         };
     }
 
@@ -589,12 +591,16 @@ public final class WindowsDisplayDiscovery {
         public byte[] modeInfo = new byte[48];
     }
 
-    @Structure.FieldOrder({"adapterId", "id", "type", "size"})
+    @Structure.FieldOrder({"type", "size", "adapterId", "id"})
     public static class DisplayConfigDeviceInfoHeader extends Structure {
-        public Luid adapterId = new Luid();
-        public int id;
         public int type;
         public int size;
+        public Luid adapterId = new Luid();
+        public int id;
+
+        int nativeOffsetOf(String fieldName) {
+            return fieldOffset(fieldName);
+        }
     }
 
     @Structure.FieldOrder({
@@ -612,13 +618,40 @@ public final class WindowsDisplayDiscovery {
         public char[] monitorDevicePath = new char[128];
     }
 
-    @Structure.FieldOrder({"header", "width", "height", "targetRefreshRate", "scanLineOrdering"})
+    @Structure.FieldOrder({"cx", "cy"})
+    public static class DisplayConfig2DRegion extends Structure {
+        public int cx;
+        public int cy;
+    }
+
+    @Structure.FieldOrder({
+            "pixelRate", "hSyncFreq", "vSyncFreq", "activeSize", "totalSize", "videoStandard", "scanLineOrdering"
+    })
+    public static class DisplayConfigVideoSignalInfo extends Structure {
+        public long pixelRate;
+        public DisplayConfigRational hSyncFreq = new DisplayConfigRational();
+        public DisplayConfigRational vSyncFreq = new DisplayConfigRational();
+        public DisplayConfig2DRegion activeSize = new DisplayConfig2DRegion();
+        public DisplayConfig2DRegion totalSize = new DisplayConfig2DRegion();
+        public int videoStandard;
+        public int scanLineOrdering;
+    }
+
+    @Structure.FieldOrder({"targetVideoSignalInfo"})
+    public static class DisplayConfigTargetMode extends Structure {
+        public DisplayConfigVideoSignalInfo targetVideoSignalInfo = new DisplayConfigVideoSignalInfo();
+    }
+
+    @Structure.FieldOrder({"header", "width", "height", "targetMode"})
     public static class TargetPreferredMode extends Structure {
         public DisplayConfigDeviceInfoHeader header = new DisplayConfigDeviceInfoHeader();
         public int width;
         public int height;
-        public DisplayConfigRational targetRefreshRate = new DisplayConfigRational();
-        public int scanLineOrdering;
+        public DisplayConfigTargetMode targetMode = new DisplayConfigTargetMode();
+
+        int nativeOffsetOf(String fieldName) {
+            return fieldOffset(fieldName);
+        }
     }
 
     @Structure.FieldOrder({"header", "viewGdiDeviceName"})

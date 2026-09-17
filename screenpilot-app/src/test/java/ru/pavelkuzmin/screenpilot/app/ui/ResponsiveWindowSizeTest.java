@@ -21,4 +21,12 @@ class ResponsiveWindowSizeTest {
         assertThat(size.width()).isEqualTo(1_366);
         assertThat(size.height()).isEqualTo(820);
     }
+
+    @Test
+    void usesTheAvailableLogicalDesktopInsteadOfForcingTheNormalMinimumOffScreen() {
+        ResponsiveWindowSize size = ResponsiveWindowSize.forAvailableDesktop(640, 500);
+
+        assertThat(size.width()).isEqualTo(592);
+        assertThat(size.height()).isEqualTo(436);
+    }
 }

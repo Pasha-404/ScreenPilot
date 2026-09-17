@@ -42,6 +42,20 @@ class StateMachineTest {
     }
 
     @Test
+    void allowsAFailedOutputToEnterRestorationForAnExplicitRetry() {
+        OutputSessionState state = OutputSessionState.NO_TARGET;
+        state = OutputSessionStateMachine.transition(state, OutputSessionEvent.TARGET_SELECTED);
+        state = OutputSessionStateMachine.transition(state, OutputSessionEvent.START_REQUESTED);
+        state = OutputSessionStateMachine.transition(state, OutputSessionEvent.DISPLAY_PREPARED);
+        state = OutputSessionStateMachine.transition(state, OutputSessionEvent.FILE_LOADED);
+        state = OutputSessionStateMachine.transition(state, OutputSessionEvent.OUTPUT_FAILED);
+
+        state = OutputSessionStateMachine.transition(state, OutputSessionEvent.STOP_OUTPUT_REQUESTED);
+
+        assertThat(state).isEqualTo(OutputSessionState.RESTORING_DISPLAY);
+    }
+
+    @Test
     void keepsTheOutputSessionReadyAfterStoppingOnlyTheFile() {
         OutputSessionState state = OutputSessionState.NO_TARGET;
         state = OutputSessionStateMachine.transition(state, OutputSessionEvent.TARGET_SELECTED);
