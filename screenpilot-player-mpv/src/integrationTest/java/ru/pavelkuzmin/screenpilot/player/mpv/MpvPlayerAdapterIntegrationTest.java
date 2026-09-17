@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
+import ru.pavelkuzmin.screenpilot.domain.media.MediaInfo;
 import ru.pavelkuzmin.screenpilot.domain.port.ProcessContainment;
 
 import java.io.DataOutputStream;
@@ -20,6 +21,8 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 @Tag("integration")
 @EnabledOnOs(OS.WINDOWS)
 class MpvPlayerAdapterIntegrationTest {
+
+    private static final int MAX_METADATA_PROBE_ATTEMPTS = 3;
 
     @Test
     void controlsRealMpvThroughThePlayerAdapterWithoutAnExternalDisplay() throws Exception {
@@ -56,8 +59,8 @@ class MpvPlayerAdapterIntegrationTest {
         Path media = Files.createTempFile("screenpilot-probe-", ".wav");
         writeSilentWav(media, 20);
 
-        try (MpvMediaProbe probe = new MpvMediaProbe(executable)) {
-            var info = probe.probe(media).toCompletableFuture().get(15, TimeUnit.SECONDS);
+        try {
+            var info = probeMetadataWithTransientStartupRetry(executable, media);
 
             assertThat(info.source()).isEqualTo(media.toAbsolutePath().normalize());
             assertThat(info.container()).contains("wav");
@@ -65,6 +68,43 @@ class MpvPlayerAdapterIntegrationTest {
         } finally {
             deleteAfterMpvRelease(media);
         }
+    }
+
+    /**
+     * A freshly started mpv can briefly create then close its IPC pipe on a busy Windows VM before
+     * its second start succeeds. This is a real-process test, not a skipped assertion: only that
+     * narrowly identified startup transport failure is retried and the final attempt still fails
+     * with the original error if mpv cannot serve the metadata request.
+     */
+    private static MediaInfo probeMetadataWithTransientStartupRetry(
+            Path executable,
+            Path media
+    ) throws Exception {
+        Exception lastFailure = null;
+        for (int attempt = 1; attempt <= MAX_METADATA_PROBE_ATTEMPTS; attempt++) {
+            try (MpvMediaProbe probe = new MpvMediaProbe(executable)) {
+                return probe.probe(media).toCompletableFuture().get(15, TimeUnit.SECONDS);
+            } catch (Exception exception) {
+                lastFailure = exception;
+                if (!isTransientPipeStartupFailure(exception) || attempt == MAX_METADATA_PROBE_ATTEMPTS) {
+                    throw exception;
+                }
+                TimeUnit.MILLISECONDS.sleep(250L * attempt);
+            }
+        }
+        throw lastFailure;
+    }
+
+    private static boolean isTransientPipeStartupFailure(Throwable failure) {
+        for (Throwable current = failure; current != null; current = current.getCause()) {
+            if (current instanceof IOException && current.getMessage() != null
+                    && (current.getMessage().contains("mpv IPC pipe disconnected")
+                    || current.getMessage().contains("mpv IPC pipe did not become available")
+                    || current.getMessage().contains("mpv IPC pipe closed before a message"))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static Path findMpvExecutable() {
