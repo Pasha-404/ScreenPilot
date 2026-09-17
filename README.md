@@ -2,7 +2,7 @@
 
 ScreenPilot — личное Windows-приложение для воспроизведения локальных видеофайлов на одном выбранном внешнем экране. Управление остаётся на ноутбуке; предпросмотра и второго видеопотока на встроенном дисплее нет.
 
-Версия: **0.1.3**. Целевая система — Windows 10/11 x64. Приложение не меняет системное устройство звука по умолчанию и не включает HDR Windows.
+Версия: **0.1.4**. Целевая система — Windows 10/11 x64. Приложение не меняет системное устройство звука по умолчанию и не включает HDR Windows.
 
 ![Ориентир по интерфейсу](screen.png)
 
@@ -37,13 +37,13 @@ ScreenPilot следует стандарту AppFleet для Windows: `jpackage
 Одна команда собирает и проверяет выпуск. Базовая версия задаётся только свойством `version` в `gradle.properties`; для конкретного release-кандидата её можно однократно переопределить параметром Gradle в формате `MAJOR.MINOR.PATCH`.
 
 ```powershell
-.\gradlew.bat clean buildWindowsInstaller "-Pversion=0.1.3"
+.\gradlew.bat clean buildWindowsInstaller "-Pversion=0.1.4"
 ```
 
-В `dist\release\0.1.3\` появятся ровно три обязательных файла:
+В `dist\release\0.1.4\` появятся ровно три обязательных файла:
 
-- `ScreenPilot-Setup-0.1.3-x64.exe`;
-- `ScreenPilot-Setup-0.1.3-x64.exe.sha256`;
+- `ScreenPilot-Setup-0.1.4-x64.exe`;
+- `ScreenPilot-Setup-0.1.4-x64.exe.sha256`;
 - `appfleet-manifest.json`.
 
 Установщик создаёт запись Windows, ярлык в меню «Пуск» и необязательный ярлык на рабочем столе. Он устанавливает заменяемые файлы в `%LOCALAPPDATA%\Programs\PashaApps\ScreenPilot`, а при обновлении сохраняет каталог установки, ярлыки, настройки и пользовательские данные. Удаление программы не удаляет settings, resume, логи или recovery без отдельного действия пользователя.
@@ -60,7 +60,7 @@ GitHub Actions повторяет эту же сборку: на `main` созд
 
 ```powershell
 .\gradlew.bat --no-daemon clean test integrationTest
-.\gradlew.bat --no-daemon clean buildWindowsInstaller "-Pversion=0.1.3"
+.\gradlew.bat --no-daemon clean buildWindowsInstaller "-Pversion=0.1.4"
 ```
 
 `buildWindowsInstaller` сам запускает unit/component и integration tests, затем создаёт app-image, Inno Setup EXE, SHA-256 и манифест AppFleet. WiX больше не нужен. Аппаратные результаты и оставшиеся проверки находятся в [чек-листе](docs/hardware-test-checklist.md), выпускной статус — в [release checklist](docs/release-checklist.md).
@@ -77,7 +77,7 @@ GitHub Actions повторяет эту же сборку: на `main` созд
 
 Существенные решения зафиксированы в [ADR](docs/adr/README.md). Полное техническое задание — [ScreenPilot_TZ.md](ScreenPilot_TZ.md), исходные требования — [ScreenPilot_FT.md](ScreenPilot_FT.md).
 
-## Ограничения версии 0.1.3
+## Ограничения версии 0.1.4
 
 - Воспроизведение на реальном телевизоре и физический HDMI-аудиовывод ещё не проверены.
 - Нет автоматического обновления, телеметрии, сети, preview на ноутбуке, HDR passthrough и одновременного вывода на несколько экранов.
