@@ -41,7 +41,15 @@ testing {
     }
 }
 
+val includeHardwareTests = providers.gradleProperty("includeHardwareTests")
+    .map { value -> value.equals("true", ignoreCase = true) }
+    .orElse(false)
+
 tasks.withType<Test>().configureEach {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        if (!includeHardwareTests.get()) {
+            excludeTags("hardware")
+        }
+    }
     systemProperty("file.encoding", "UTF-8")
 }

@@ -45,9 +45,9 @@
 | Этап 8: logs и диагностика | PASS | 0.1.0 пишет UTF-8 log с ротацией; unit-тест подтверждает вырезание Windows-путей из отчёта. |
 | Этап 8: долгий запуск / UI hot unplug-replug / Windows 11 | NOT TESTED | Требуются отдельные физические проверки; их отсутствие не маскируется автоматическими тестами. |
 | Этап 9: app image и per-user EXE | PASS | 29.08.2026 `buildWindowsInstaller` собрал self-contained app-image и Inno Setup EXE. Чистая установка, обновление и удаление остаются `NOT TESTED`. |
-| Release 0.1.0: нативная иконка EXE | PASS | 17.09.2026 `verifyAppImageNativeIcon` открыл упакованный `ScreenPilot.exe` как ресурсный модуль Windows и подтвердил `RT_GROUP_ICON`, `RT_ICON`, слой 256×256. Визуальное соответствие иконки на чистой системе остаётся `NOT TESTED`. |
-| Release 0.1.0: точное размещение окна mpv по PID и physical bounds | NOT TESTED | Автотесты проверяют фильтрацию по PID, exact `SetWindowPos` и read-back bounds без JavaFX logical coordinates. Физический монитор с mixed DPI после этой реализации не подключён. |
-| Release 0.1.0: карточка незавершённого recovery | NOT TESTED | Есть unit-тест, что pending journal блокирует старт output, и реализация требует явного выбора «Восстановить» либо «Оставить текущую конфигурацию». Проверка на реальном stale journal/дисплее не выполнялась. |
+| Release 0.1.1: нативная иконка EXE | PASS | 17.09.2026 `verifyAppImageNativeIcon` открыл упакованный `ScreenPilot.exe` как ресурсный модуль Windows и подтвердил `RT_GROUP_ICON`, `RT_ICON`, слой 256×256. Визуальное соответствие иконки на чистой системе остаётся `NOT TESTED`. |
+| Release 0.1.1: точное размещение окна mpv по PID и physical bounds | NOT TESTED | Автотесты проверяют фильтрацию по PID, exact `SetWindowPos` и read-back bounds без JavaFX logical coordinates. Физический монитор с mixed DPI после этой реализации не подключён. |
+| Release 0.1.1: карточка незавершённого recovery | NOT TESTED | Есть unit-тест, что pending journal блокирует старт output, и реализация требует явного выбора «Восстановить» либо «Оставить текущую конфигурацию». Проверка на реальном stale journal/дисплее не выполнялась. |
 | Этап 9: clean install/update/uninstall | NOT TESTED | EXE намеренно не устанавливался в рабочий профиль во время сборки. |
 
 Эталонная среда: Windows 10 Pro 22H2 build 19045; AMD Radeon Graphics driver `31.0.12046.15003`; mpv `v0.41.0-744-g304426c39`. Windows видит внешний HDMI `DISPLAY2` 1920×1080 @ 59,940 Гц в extended mode.

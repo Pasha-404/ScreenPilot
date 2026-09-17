@@ -1,4 +1,4 @@
-# Чек-лист выпуска 0.1.0
+# Чек-лист выпуска 0.1.1
 
 Статусы: `PASS`, `FAIL`, `NOT TESTED`, `BLOCKED`.
 
@@ -12,9 +12,9 @@
 | Логи и диагностика | PASS | Logback, ротация и redaction отчёта покрыты сборкой и unit-тестом. |
 | Проверка hash mpv | PASS | `verifyMpvRuntime` сверил три зафиксированных SHA-256 до упаковки. |
 | Self-contained app image и нативная иконка | PASS | 17.09.2026 `packageAppImage` собрал self-contained image; `verifyAppImageNativeIcon` открыл финальный `ScreenPilot.exe` как resource module и подтвердил `RT_GROUP_ICON`, `RT_ICON` и слой 256×256. Запуск упакованного UI после последних изменений — `NOT TESTED`. |
-| Per-user EXE installer | PASS | 17.09.2026 Inno Setup 6.7.1 собрал `ScreenPilot-Setup-0.1.0-x64.exe` (84 487 362 байта) из self-contained app-image. Это подтверждает упаковку, но не заменяет проверку установки. |
+| Per-user EXE installer | PASS | 17.09.2026 Inno Setup 6.7.1 собрал `ScreenPilot-Setup-0.1.1-x64.exe` (84 482 297 байт) из self-contained app-image. Это подтверждает упаковку, но не заменяет проверку установки. |
 | AppFleet manifest и SHA-256 | PASS | `buildWindowsInstaller` и отдельный `packaging/verify-release-assets.ps1` подтвердили ровно три asset, их размер, имя, SHA-256, manifest schema 1, `desktopShortcutTask=desktopicon`, `minimumAppFleetVersion=2.0.0` и metadata финального JAR. |
-| GitHub Actions: сборка и GitHub Release | NOT TESTED | Workflow повторяет локальный конвейер: восстанавливает pinned mpv с проверкой SHA-256, собирает три assets и публикует их при теге `vMAJOR.MINOR.PATCH`. Фактический cloud run станет доступен только после коммита и push. |
+| GitHub Actions: сборка и GitHub Release | NOT TESTED | Первый cloud run на теге `v0.1.0` завершился `FAIL`: hardware-тест discovery требовал internal display у GitHub Windows-runner. Hardware-тесты исключены из CI и запускаются только с `-PincludeHardwareTests=true`; ожидается новый run тега `v0.1.1`. |
 | Notices и исходники для публичной поставки mpv | BLOCKED | Закреплённая Windows-сборка mpv — отдельный сторонний binary. Текущий `THIRD_PARTY_NOTICES.md` прямо отмечает отсутствие полного комплекта notices/SBOM и проверки условий для `d3dcompiler_43.dll`. Без выбранного и выполненного лицензионного пути публичный тег с этим EXE создавать нельзя. |
 | Чистая install/update/uninstall | NOT TESTED | Не выполнять в рабочем профиле без отдельной ручной проверки; нужны чистый профиль или VM. |
 | HDMI-аудио на устройстве с динамиками | NOT TESTED | У доступного монитора нет подтверждённых динамиков. |
