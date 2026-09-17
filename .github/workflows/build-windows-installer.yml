@@ -76,6 +76,9 @@ jobs:
       contents: write
 
     steps:
+      - name: Checkout verification scripts
+        uses: actions/checkout@v6
+
       - name: Download release assets
         uses: actions/download-artifact@v5
         with:
